@@ -55,6 +55,12 @@ const ESTADOS  = ["Pendiente","Confirmado","En proceso","Completado","Cancelado"
 const ESTADOS_CERRADOS = ["Completado","Cancelado"];
 const ESTADOS_REQUIEREN_TECNICO = ["Confirmado","En proceso","Completado"];
 const UNIDADES = ["L","kg","piezas","bloques","cajas"];
+const ZONAS = ["Monterrey","San Nicolás de los Garza","Guadalupe","Apodaca","General Escobedo","Santa Catarina","San Pedro Garza García","García","Juárez"];
+
+/* ── Validadores reutilizables (técnicos y proveedores) ── */
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
+const soloDigitos = (v) => String(v||"").replace(/\D/g,"");
+const RFC_RE = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/i;
 const MESES_CORTOS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 
 const ESTADO_STYLE = {
@@ -75,10 +81,10 @@ const CLIENTES_MOCK = [
 ];
 
 const TECNICOS_INIT = [
-  { id:"T-01", nombre:"Carlos",    apellidoPaterno:"Mendoza",  apellidoMaterno:"Ríos",   telefono:"81 4411 2233", correo:"c.mendoza@marronking.mx",  rfc:"MERC880415JK2", especialidad:"Fumigación general"   },
-  { id:"T-02", nombre:"Sofía",     apellidoPaterno:"Torres",   apellidoMaterno:"Leal",   telefono:"81 4422 3344", correo:"s.torres@marronking.mx",   rfc:"TOLS920711LM4", especialidad:"Desratización"        },
-  { id:"T-03", nombre:"Alejandro", apellidoPaterno:"Pérez",    apellidoMaterno:"Vega",   telefono:"81 4433 4455", correo:"a.perez@marronking.mx",    rfc:"PEVA850920NP6", especialidad:"Control de termitas"  },
-  { id:"T-04", nombre:"Valeria",   apellidoPaterno:"Guzmán",   apellidoMaterno:"Cruz",   telefono:"81 4444 5566", correo:"v.guzman@marronking.mx",   rfc:"GUCV990303QR8", especialidad:"Sanitización y desinfección" },
+  { id:"T-01", nombre:"Carlos",    apellidoPaterno:"Mendoza",  apellidoMaterno:"Ríos",   telefono:"81 4411 2233", correo:"c.mendoza@marronking.mx",  rfc:"MERC880415JK2", nss:"12858801234", sucursal:"Monterrey",          contactoEmergenciaNombre:"Laura Ríos",      contactoEmergenciaTelefono:"81 1200 3401", especialidad:"Fumigación general"   },
+  { id:"T-02", nombre:"Sofía",     apellidoPaterno:"Torres",   apellidoMaterno:"Leal",   telefono:"81 4422 3344", correo:"s.torres@marronking.mx",   rfc:"TOLS920711LM4", nss:"12929202345", sucursal:"San Nicolás de los Garza", contactoEmergenciaNombre:"Jorge Torres",    contactoEmergenciaTelefono:"81 1200 3402", especialidad:"Desratización"        },
+  { id:"T-03", nombre:"Alejandro", apellidoPaterno:"Pérez",    apellidoMaterno:"Vega",   telefono:"81 4433 4455", correo:"a.perez@marronking.mx",    rfc:"PEVA850920NP6", nss:"12858503456", sucursal:"Guadalupe",          contactoEmergenciaNombre:"Marta Vega",      contactoEmergenciaTelefono:"81 1200 3403", especialidad:"Control de termitas"  },
+  { id:"T-04", nombre:"Valeria",   apellidoPaterno:"Guzmán",   apellidoMaterno:"Cruz",   telefono:"81 4444 5566", correo:"v.guzman@marronking.mx",   rfc:"GUCV990303QR8", nss:"12999904567", sucursal:"Apodaca",            contactoEmergenciaNombre:"Luis Guzmán",     contactoEmergenciaTelefono:"81 1200 3404", especialidad:"Sanitización y desinfección" },
 ];
 
 const PROVEEDORES_INIT = [
@@ -913,20 +919,21 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
           </div>
           <div className="table-wrap">
             <table className="table">
-              <thead><tr><th>ID</th><th>Nombre</th><th>Ap. Paterno</th><th>Ap. Materno</th><th>Teléfono</th><th>Correo</th><th>RFC</th><th>Especialidad</th><th>Asignaciones activas</th><th></th></tr></thead>
+              <thead><tr><th>ID</th><th>Nombre</th><th>Ap. Paterno</th><th>Ap. Materno</th><th>Teléfono</th><th>Correo</th><th>RFC</th><th>NSS</th><th>Zona / Sucursal</th><th>Contacto de emergencia</th><th>Especialidad</th><th>Asignaciones activas</th><th></th></tr></thead>
               <tbody>
                 {tecnicos.map((t)=>{
                   const asig = solicitudes.filter((s)=>s.tecnicoId===t.id && !ESTADOS_CERRADOS.includes(s.estado)).length;
                   return (
                     <tr key={t.id}>
                       <td className="mono">{t.id}</td><td>{t.nombre}</td><td>{t.apellidoPaterno}</td><td>{t.apellidoMaterno}</td>
-                      <td>{t.telefono}</td><td>{t.correo}</td><td className="mono">{t.rfc}</td><td>{t.especialidad}</td>
+                      <td>{t.telefono}</td><td>{t.correo}</td><td className="mono">{t.rfc}</td><td className="mono">{t.nss}</td><td>{t.sucursal}</td>
+                      <td>{t.contactoEmergenciaNombre}<br/><span className="mono" style={{fontSize:12}}>{t.contactoEmergenciaTelefono}</span></td><td>{t.especialidad}</td>
                       <td><strong>{asig}</strong></td>
                       <td>{esAdmin && <DeleteBtn onDelete={()=>delTecnico(t.id)} label="técnico"/>}</td>
                     </tr>
                   );
                 })}
-                {tecnicos.length===0&&<tr><td colSpan={10} className="table-empty">No hay técnicos registrados.</td></tr>}
+                {tecnicos.length===0&&<tr><td colSpan={13} className="table-empty">No hay técnicos registrados.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1060,29 +1067,69 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
 ────────────────────────────────────────────── */
 
 function ModalTecnico({ onSave, onClose }) {
-  const [f, setF] = useState({ nombre:"", apellidoPaterno:"", apellidoMaterno:"", telefono:"", correo:"", rfc:"", especialidad:"" });
-  const up = (k,v) => setF((x)=>({...x,[k]:v}));
-  const submit = (e) => { e.preventDefault(); if(!f.nombre.trim()||!f.apellidoPaterno.trim()) return; onSave({ ...f, nombre:f.nombre.trim(), apellidoPaterno:f.apellidoPaterno.trim(), apellidoMaterno:f.apellidoMaterno.trim(), rfc:f.rfc.trim().toUpperCase() }); };
+  const [f, setF] = useState({ nombre:"", apellidoPaterno:"", apellidoMaterno:"", telefono:"", confirmacionTelefono:"", correo:"", confirmacionCorreo:"", rfc:"", nss:"", sucursal:"", especialidad:"", contactoEmergenciaNombre:"", contactoEmergenciaTelefono:"" });
+  const [errors, setErrors] = useState({});
+  const up = (k,v) => { setF((x)=>({...x,[k]:v})); setErrors((e)=>(e[k]?{...e,[k]:undefined}:e)); };
+  const validate = () => {
+    const e = {};
+    if (!f.nombre.trim())          e.nombre = "Ingresa el nombre.";
+    if (!f.apellidoPaterno.trim()) e.apellidoPaterno = "Ingresa el apellido paterno.";
+    if (soloDigitos(f.telefono).length !== 10) e.telefono = "Ingresa un teléfono de 10 dígitos.";
+    if (soloDigitos(f.confirmacionTelefono) !== soloDigitos(f.telefono) || !f.confirmacionTelefono.trim()) e.confirmacionTelefono = "Los teléfonos no coinciden.";
+    if (!EMAIL_RE.test(f.correo.trim())) e.correo = "Correo inválido.";
+    if (f.correo.trim().toLowerCase() !== f.confirmacionCorreo.trim().toLowerCase() || !f.confirmacionCorreo.trim()) e.confirmacionCorreo = "Los correos no coinciden.";
+    if (!/^[A-ZÑ&]{4}\d{6}[A-Z0-9]{3}$/i.test(f.rfc.trim())) e.rfc = "RFC inválido (persona física, 13 caracteres).";
+    if (soloDigitos(f.nss).length !== 11) e.nss = "El NSS debe tener 11 dígitos.";
+    if (!f.sucursal)      e.sucursal = "Selecciona la zona o sucursal.";
+    if (!f.especialidad)  e.especialidad = "Selecciona una especialidad.";
+    if (!f.contactoEmergenciaNombre.trim()) e.contactoEmergenciaNombre = "Ingresa el nombre del contacto de emergencia.";
+    if (soloDigitos(f.contactoEmergenciaTelefono).length !== 10) e.contactoEmergenciaTelefono = "Ingresa un teléfono de 10 dígitos.";
+    else if (soloDigitos(f.contactoEmergenciaTelefono) === soloDigitos(f.telefono)) e.contactoEmergenciaTelefono = "Debe ser distinto al teléfono del técnico.";
+    setErrors(e); return Object.keys(e).length === 0;
+  };
+  const submit = (ev) => {
+    ev.preventDefault(); if (!validate()) return;
+    const { confirmacionTelefono, confirmacionCorreo, ...datos } = f;
+    onSave({ ...datos, nombre:f.nombre.trim(), apellidoPaterno:f.apellidoPaterno.trim(), apellidoMaterno:f.apellidoMaterno.trim(), correo:f.correo.trim(), rfc:f.rfc.trim().toUpperCase(), nss:soloDigitos(f.nss), contactoEmergenciaNombre:f.contactoEmergenciaNombre.trim() });
+  };
+  const fp = { form:f, update:up, errors };
   return (
     <Modal title="Agregar técnico" onClose={onClose}>
-      <form className="form" onSubmit={submit}>
+      <form className="form" onSubmit={submit} noValidate>
         <div className="form-row form-row-3">
-          <label>Nombre(s)*<div className="input-wrap"><input value={f.nombre} onChange={(e)=>up("nombre",e.target.value)} required placeholder="Nombre"/></div></label>
-          <label>Ap. Paterno*<div className="input-wrap"><input value={f.apellidoPaterno} onChange={(e)=>up("apellidoPaterno",e.target.value)} required placeholder="Ap. Paterno"/></div></label>
-          <label>Ap. Materno<div className="input-wrap"><input value={f.apellidoMaterno} onChange={(e)=>up("apellidoMaterno",e.target.value)} placeholder="Ap. Materno"/></div></label>
+          <Field {...fp} label="Nombre(s)*" name="nombre" placeholder="Nombre"/>
+          <Field {...fp} label="Ap. Paterno*" name="apellidoPaterno" placeholder="Ap. Paterno"/>
+          <Field {...fp} label="Ap. Materno (opcional)" name="apellidoMaterno" placeholder="Ap. Materno"/>
         </div>
         <div className="form-row form-row-2">
-          <label>Teléfono<div className="input-wrap"><input value={f.telefono} onChange={(e)=>up("telefono",e.target.value)} placeholder="81 0000 0000"/></div></label>
-          <label>RFC<div className="input-wrap"><input value={f.rfc} onChange={(e)=>up("rfc",e.target.value)} placeholder="RFC" maxLength={13}/></div></label>
+          <Field {...fp} label="Teléfono*" name="telefono" type="tel" inputMode="tel" placeholder="81 0000 0000" maxLength={14}/>
+          <Field {...fp} label="Confirmación de teléfono*" name="confirmacionTelefono" type="tel" inputMode="tel" placeholder="Repite el teléfono" maxLength={14}/>
         </div>
         <div className="form-row form-row-2">
-          <label>Correo<div className="input-wrap"><input type="email" value={f.correo} onChange={(e)=>up("correo",e.target.value)} placeholder="correo@marronking.mx"/></div></label>
-          <label>Especialidad<div className="input-wrap">
+          <Field {...fp} label="Correo*" name="correo" type="email" placeholder="correo@marronking.mx"/>
+          <Field {...fp} label="Confirmación de correo*" name="confirmacionCorreo" type="email" placeholder="Repite el correo"/>
+        </div>
+        <div className="form-row form-row-2">
+          <Field {...fp} label="RFC*" name="rfc" placeholder="RFC" maxLength={13}/>
+          <Field {...fp} label="Número de Seguro Social (NSS)*" name="nss" inputMode="numeric" placeholder="11 dígitos" maxLength={11}/>
+        </div>
+        <div className="form-row form-row-2">
+          <label>Zona o sucursal asignada*<div className="input-wrap">
+            <select value={f.sucursal} onChange={(e)=>up("sucursal",e.target.value)}>
+              <option value="">Selecciona</option>
+              {ZONAS.map((z)=><option key={z} value={z}>{z}</option>)}
+            </select>
+          </div>{errors.sucursal&&<span className="field-error">{errors.sucursal}</span>}</label>
+          <label>Especialidad*<div className="input-wrap">
             <select value={f.especialidad} onChange={(e)=>up("especialidad",e.target.value)}>
               <option value="">Selecciona</option>
-              {SERVICES.map((s)=><option key={s.id} value={s.label}>{s.label}</option>)}
+              {SERVICES.map((sv)=><option key={sv.id} value={sv.label}>{sv.label}</option>)}
             </select>
-          </div></label>
+          </div>{errors.especialidad&&<span className="field-error">{errors.especialidad}</span>}</label>
+        </div>
+        <div className="form-row form-row-2">
+          <Field {...fp} label="Contacto de emergencia (nombre)*" name="contactoEmergenciaNombre" placeholder="Nombre completo"/>
+          <Field {...fp} label="Contacto de emergencia (teléfono)*" name="contactoEmergenciaTelefono" type="tel" inputMode="tel" placeholder="81 0000 0000" maxLength={14}/>
         </div>
         <div className="modal-actions">
           <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
@@ -1094,27 +1141,49 @@ function ModalTecnico({ onSave, onClose }) {
 }
 
 function ModalProveedor({ onSave, onClose }) {
-  const [f, setF] = useState({ nombre:"", telefono:"", correo:"", rfc:"", categoriaProveedor:"", direccion:"" });
-  const up = (k,v) => setF((x)=>({...x,[k]:v}));
-  const submit = (e) => { e.preventDefault(); if(!f.nombre.trim()) return; onSave({ ...f, nombre:f.nombre.trim(), rfc:f.rfc.trim().toUpperCase() }); };
+  const [f, setF] = useState({ nombre:"", telefono:"", confirmacionTelefono:"", correo:"", confirmacionCorreo:"", rfc:"", categoriaProveedor:"", direccion:"" });
+  const [errors, setErrors] = useState({});
+  const up = (k,v) => { setF((x)=>({...x,[k]:v})); setErrors((e)=>(e[k]?{...e,[k]:undefined}:e)); };
+  const validate = () => {
+    const e = {};
+    if (!f.nombre.trim()) e.nombre = "Ingresa la razón social.";
+    if (!f.categoriaProveedor) e.categoriaProveedor = "Selecciona una categoría.";
+    if (soloDigitos(f.telefono).length !== 10) e.telefono = "Ingresa un teléfono de 10 dígitos.";
+    if (soloDigitos(f.confirmacionTelefono) !== soloDigitos(f.telefono) || !f.confirmacionTelefono.trim()) e.confirmacionTelefono = "Los teléfonos no coinciden.";
+    if (!EMAIL_RE.test(f.correo.trim())) e.correo = "Correo inválido.";
+    if (f.correo.trim().toLowerCase() !== f.confirmacionCorreo.trim().toLowerCase() || !f.confirmacionCorreo.trim()) e.confirmacionCorreo = "Los correos no coinciden.";
+    if (!RFC_RE.test(f.rfc.trim())) e.rfc = "RFC inválido.";
+    if (!f.direccion.trim()) e.direccion = "Ingresa la dirección.";
+    setErrors(e); return Object.keys(e).length === 0;
+  };
+  const submit = (ev) => {
+    ev.preventDefault(); if (!validate()) return;
+    const { confirmacionTelefono, confirmacionCorreo, ...datos } = f;
+    onSave({ ...datos, nombre:f.nombre.trim(), correo:f.correo.trim(), direccion:f.direccion.trim(), rfc:f.rfc.trim().toUpperCase() });
+  };
+  const fp = { form:f, update:up, errors };
   return (
     <Modal title="Agregar proveedor" onClose={onClose}>
-      <form className="form" onSubmit={submit}>
+      <form className="form" onSubmit={submit} noValidate>
         <div className="form-row form-row-2">
-          <label>Nombre*<div className="input-wrap"><input value={f.nombre} onChange={(e)=>up("nombre",e.target.value)} required placeholder="Razón social"/></div></label>
-          <label>Categoría<div className="input-wrap">
+          <Field {...fp} label="Nombre*" name="nombre" placeholder="Razón social"/>
+          <label>Categoría*<div className="input-wrap">
             <select value={f.categoriaProveedor} onChange={(e)=>up("categoriaProveedor",e.target.value)}>
               <option value="">Selecciona</option>
               {["Químicos","Equipos","Cebos y trampas","Desinfectantes","Otros"].map((c)=><option key={c}>{c}</option>)}
             </select>
-          </div></label>
+          </div>{errors.categoriaProveedor&&<span className="field-error">{errors.categoriaProveedor}</span>}</label>
         </div>
         <div className="form-row form-row-2">
-          <label>Teléfono<div className="input-wrap"><input value={f.telefono} onChange={(e)=>up("telefono",e.target.value)} placeholder="81 0000 0000"/></div></label>
-          <label>RFC<div className="input-wrap"><input value={f.rfc} onChange={(e)=>up("rfc",e.target.value)} placeholder="RFC" maxLength={13}/></div></label>
+          <Field {...fp} label="Teléfono*" name="telefono" type="tel" inputMode="tel" placeholder="81 0000 0000" maxLength={14}/>
+          <Field {...fp} label="Confirmación de teléfono*" name="confirmacionTelefono" type="tel" inputMode="tel" placeholder="Repite el teléfono" maxLength={14}/>
         </div>
-        <label>Correo<div className="input-wrap"><input type="email" value={f.correo} onChange={(e)=>up("correo",e.target.value)} placeholder="contacto@proveedor.mx"/></div></label>
-        <label>Dirección<div className="input-wrap"><input value={f.direccion} onChange={(e)=>up("direccion",e.target.value)} placeholder="Calle, número, ciudad"/></div></label>
+        <div className="form-row form-row-2">
+          <Field {...fp} label="Correo*" name="correo" type="email" placeholder="contacto@proveedor.mx"/>
+          <Field {...fp} label="Confirmación de correo*" name="confirmacionCorreo" type="email" placeholder="Repite el correo"/>
+        </div>
+        <Field {...fp} label="RFC*" name="rfc" placeholder="RFC" maxLength={13}/>
+        <Field {...fp} label="Dirección*" name="direccion" placeholder="Calle, número, ciudad"/>
         <div className="modal-actions">
           <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
           <button type="submit" className="btn btn-primary"><Plus size={15}/> Guardar proveedor</button>
