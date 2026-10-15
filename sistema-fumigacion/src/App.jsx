@@ -281,6 +281,24 @@ function DeleteBtn({ onDelete, label }) {
   );
 }
 
+/* ── Botón "Vaciar todo" con confirmación inline ── */
+function ClearAllBtn({ onClear, count, label }) {
+  const [confirm, setConfirm] = useState(false);
+  if (confirm)
+    return (
+      <span style={{ display:"inline-flex", alignItems:"center", gap:6 }}>
+        <span className="dim" style={{ color:"#dc2626", fontWeight:600 }}>¿Vaciar {count} {label}?</span>
+        <button className="btn-del-confirm" onClick={() => { onClear(); setConfirm(false); }}>Sí, vaciar</button>
+        <button className="btn-del-cancel" onClick={() => setConfirm(false)}>Cancelar</button>
+      </span>
+    );
+  return (
+    <button className="btn btn-outline btn-clear" disabled={count === 0} onClick={() => setConfirm(true)}>
+      <Trash2 size={15}/> Vaciar todo
+    </button>
+  );
+}
+
 /* ============================================================
    NAVEGACIÓN
    ============================================================ */
@@ -826,6 +844,27 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
   };
   const delMateriaPrima = (id) => { setMateriaPrima((l)=>l.filter((m)=>m.id!==id)); setToast("Insumo eliminado."); };
 
+  /* ─ Vaciar listas completas (para empezar pruebas desde cero) ─ */
+  const vaciarTecnicos = () => {
+    setSolicitudes((l)=>l.map((s)=>s.tecnicoId
+      ? { ...s, tecnicoId:null, estado:(ESTADOS_REQUIEREN_TECNICO.includes(s.estado) && s.estado!=="Completado") ? "Pendiente" : s.estado }
+      : s));
+    setTecnicos([]);
+    tecnicoCounter = 0;                       // el siguiente técnico será T-01
+    setToast("Técnicos vaciados. Las solicitudes activas regresaron a \"Pendiente\".");
+  };
+  const vaciarProveedores = () => {
+    setMateriaPrima((l)=>l.map((m)=>({ ...m, proveedorId:"" })));   // los insumos quedan "sin proveedor"
+    setProveedores([]);
+    proveedorCounter = 0;                     // el siguiente proveedor será PR-01
+    setToast("Proveedores vaciados. Los insumos quedaron sin proveedor asignado.");
+  };
+  const vaciarMateriaPrima = () => {
+    setMateriaPrima([]);
+    mpCounter = 0;                            // el siguiente insumo será MP-01
+    setToast("Inventario de materia prima vaciado.");
+  };
+
   const valorInventario = materiaPrima.reduce((a,m)=>a+m.cantidad*m.precioMateriaPrima,0);
 
   const tabs = [
@@ -916,6 +955,7 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
         <div className="admin-panel">
           <div className="admin-toolbar">
             <button className="btn btn-primary" onClick={()=>setModal({tipo:"tecnico"})}><Plus size={15}/> Agregar técnico</button>
+            {esAdmin && <span style={{ marginLeft:"auto" }}><ClearAllBtn count={tecnicos.length} label="técnicos" onClear={vaciarTecnicos}/></span>}
           </div>
           <div className="table-wrap">
             <table className="table">
@@ -945,6 +985,7 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
         <div className="admin-panel">
           <div className="admin-toolbar">
             <button className="btn btn-primary" onClick={()=>setModal({tipo:"proveedor"})}><Plus size={15}/> Agregar proveedor</button>
+            {esAdmin && <span style={{ marginLeft:"auto" }}><ClearAllBtn count={proveedores.length} label="proveedores" onClear={vaciarProveedores}/></span>}
           </div>
           <div className="table-wrap">
             <table className="table">
@@ -970,6 +1011,7 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
           <div className="admin-toolbar">
             <button className="btn btn-primary" onClick={()=>setModal({tipo:"materiaPrima"})}><Plus size={15}/> Agregar insumo</button>
             <span className="dim" style={{ marginLeft:"auto" }}>Valor total en inventario: <strong style={{ color:"var(--ink)" }}>{mxn(valorInventario)}</strong></span>
+            {esAdmin && <ClearAllBtn count={materiaPrima.length} label="insumos" onClear={vaciarMateriaPrima}/>}
           </div>
           <div className="table-wrap">
             <table className="table">
@@ -1339,6 +1381,8 @@ body { display:block!important; place-items:unset!important; }
 .btn-del:hover { background:#fef2f2; }
 .btn-del-confirm { background:#dc2626; color:#fff; border:none; border-radius:4px; padding:5px 10px; font-size:12px; font-weight:600; cursor:pointer; }
 .btn-del-cancel  { background:transparent; color:var(--ink-soft); border:1px solid var(--line); border-radius:4px; padding:5px 10px; font-size:12px; cursor:pointer; }
+.btn-clear { color:#dc2626; border-color:#fca5a5; }
+.btn-clear:hover:not(:disabled) { background:#fef2f2; border-color:#dc2626; }
 
 /* Layout */
 .section { max-width:1180px; margin:0 auto; padding:76px 28px; }
