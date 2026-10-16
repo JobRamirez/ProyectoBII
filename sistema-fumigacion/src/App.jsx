@@ -11,6 +11,7 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
+import { jsPDF } from "jspdf";
 
 /* ============================================================
    DATOS DE REFERENCIA (constantes)
@@ -154,6 +155,145 @@ function computeQuote({ propertyId, pestId, sizeId, serviceId }) {
 let folioCounter = 4200;
 function nextFolio() { folioCounter += 1; return `MK-2026-${String(folioCounter).padStart(5,"0")}`; }
 
+/* ============================================================
+   COMPROBANTE PDF + ENVÍO DE FOLIO POR CORREO
+   ============================================================ */
+
+/* ▼▼ CONFIGURA ESTO ▼▼ */
+const EMAIL_EMPRESA = "ventas@marronking.mx";          // correo de la empresa que recibe cada folio
+const EMAILJS = { serviceId:"", templateId:"", publicKey:"" };   // datos de tu cuenta de EmailJS (emailjs.com)
+/* ▲▲ ─────────────── ▲▲ */
+
+/* Genera y descarga el comprobante en PDF (diseño de ticket con muescas) */
+function generarPdfComprobante(d) {
+  const doc = new jsPDF({ unit:"mm", format:"a4" });
+  const PW = 210, PH = 297, CW = 120, CX = (PW - CW) / 2, CY = 22, PAD = 10, VW = CW - PAD * 2 - 32;
+  const teal = [0,105,92], ink = [11,35,32], soft = [75,104,100], line = [215,224,222], blue = [25,118,210], grey = [236,239,241];
+  const fmt = (n) => currency(n).replace(/\u00A0/g, " ");
+  const generado = new Date().toLocaleString("es-MX", { dateStyle:"medium", timeStyle:"short" });
+
+  const filas = [
+    ["Cliente",   d.cliente],
+    ["Teléfono",  d.telefono],
+    ["Correo",    d.correo],
+    ["Servicio",  d.servicio],
+    ["Plaga",     d.plaga],
+    ["Inmueble",  `${d.inmueble} · ${d.tamano}`],
+    ["Dirección", d.direccionCompleta],
+    ["Fecha",     `${d.fecha} · ${d.horario}`],
+  ];
+  if (d.notas) filas.push(["Notas", d.notas.slice(0, 160)]);
+
+  doc.setFont("helvetica", "bold"); doc.setFontSize(9.5);
+  const lineas   = filas.map(([, v]) => doc.splitTextToSize(String(v), VW));
+  const altoFila = (n) => n * 4.4 + 2.8;
+  const altoFilas = lineas.reduce((a, l) => a + altoFila(l.length), 0);
+  const nota = "Estimado no vinculante. El precio final se confirma al agendar la visita.";
+  const HEAD = 30, FOLIO = 22, DIV = 12, TOTALES = 27, NOTA = 14, FOOT = 14;
+  const CH = HEAD + FOLIO + altoFilas + DIV + TOTALES + NOTA + FOOT;
+
+  // Fondo y tarjeta
+  doc.setFillColor(...grey); doc.rect(0, 0, PW, PH, "F");
+  doc.setFillColor(255,255,255); doc.setDrawColor(...line); doc.setLineWidth(0.3);
+  doc.rect(CX, CY, CW, CH, "FD");
+
+  // Encabezado
+  doc.setFillColor(...teal); doc.rect(CX, CY, CW, HEAD, "F");
+  doc.setTextColor(255,255,255);
+  doc.setFont("helvetica", "bold");   doc.setFontSize(15);  doc.text("MARRÓN KING", CX + PAD, CY + 13);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.text("Control de plagas", CX + PAD, CY + 19.5);
+  doc.setFont("helvetica", "bold");   doc.setFontSize(7.5); doc.text("COMPROBANTE DE SOLICITUD", CX + CW - PAD, CY + 13, { align:"right" });
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5); doc.text(`Generado: ${generado}`, CX + CW - PAD, CY + 19.5, { align:"right" });
+
+  // Folio
+  let y = CY + HEAD + 10;
+  doc.setTextColor(...soft); doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
+  doc.text("FOLIO DE SERVICIO", CX + PAD, y);
+  doc.setTextColor(...ink); doc.setFont("courier", "bold"); doc.setFontSize(19);
+  doc.text(d.folio, CX + PAD, y + 9);
+  y = CY + HEAD + FOLIO;
+
+  // Datos
+  doc.setFontSize(9.5);
+  filas.forEach(([k], i) => {
+    y += 1.4;
+    doc.setFont("helvetica", "normal"); doc.setTextColor(...soft); doc.text(k, CX + PAD, y + 3);
+    doc.setFont("helvetica", "bold");   doc.setTextColor(...ink);  doc.text(lineas[i], CX + CW - PAD, y + 3, { align:"right" });
+    y += altoFila(lineas[i].length) - 1.4;
+  });
+
+  // Divisor perforado con muescas
+  y += 4;
+  doc.setDrawColor(...line); doc.setLineDashPattern([1.2, 1.2], 0); doc.line(CX + PAD, y, CX + CW - PAD, y); doc.setLineDashPattern([], 0);
+  doc.setFillColor(...grey); doc.circle(CX, y, 3.4, "F"); doc.circle(CX + CW, y, 3.4, "F");
+
+  // Totales
+  y += 9;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
+  [["Subtotal", fmt(d.subtotal)], ["IVA (16%)", fmt(d.iva)]].forEach(([k, v]) => {
+    doc.setTextColor(...soft); doc.setFont("helvetica", "normal"); doc.text(k, CX + PAD, y);
+    doc.setTextColor(...ink);  doc.setFont("helvetica", "bold");   doc.text(v, CX + CW - PAD, y, { align:"right" });
+    y += 6.5;
+  });
+  doc.setTextColor(...ink); doc.setFont("helvetica", "bold"); doc.setFontSize(10.5); doc.text("Total estimado", CX + PAD, y + 1);
+  doc.setTextColor(...blue); doc.setFont("courier", "bold"); doc.setFontSize(14); doc.text(fmt(d.total), CX + CW - PAD, y + 1, { align:"right" });
+
+  // Nota y pie
+  y += 11;
+  doc.setTextColor(...soft); doc.setFont("helvetica", "italic"); doc.setFontSize(7.5);
+  doc.text(doc.splitTextToSize(nota, CW - PAD * 2), CX + PAD, y);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
+  doc.text("Marrón King · 81 8000 1234 · hola@marronking.mx", CX + CW / 2, CY + CH - 6, { align:"center" });
+
+  doc.save(`Comprobante-${d.folio}.pdf`);
+}
+
+/* Texto del correo con el folio */
+function textoFolio(d) {
+  return [
+    `Nueva solicitud de servicio — ${d.folio}`,
+    ``,
+    `Cliente:   ${d.cliente}`,
+    `Teléfono:  ${d.telefono}`,
+    `Correo:    ${d.correo}`,
+    `Servicio:  ${d.servicio}`,
+    `Plaga:     ${d.plaga}`,
+    `Inmueble:  ${d.inmueble} · ${d.tamano}`,
+    `Dirección: ${d.direccionCompleta}`,
+    `Fecha:     ${d.fecha} · ${d.horario}`,
+    d.notas ? `Notas:     ${d.notas}` : null,
+    ``,
+    `Subtotal: ${currency(d.subtotal)}`,
+    `IVA (16%): ${currency(d.iva)}`,
+    `Total estimado: ${currency(d.total)}`,
+  ].filter((l) => l !== null).join("\n");
+}
+
+/* Envía el folio al correo de la empresa vía EmailJS. Devuelve: "enviado" | "error" | "sin-configurar" */
+async function enviarFolioAEmpresa(d) {
+  const { serviceId, templateId, publicKey } = EMAILJS;
+  if (!serviceId || !templateId || !publicKey) return "sin-configurar";
+  try {
+    const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({
+        service_id:serviceId, template_id:templateId, user_id:publicKey,
+        template_params:{
+          to_email:EMAIL_EMPRESA, folio:d.folio, cliente:d.cliente, telefono:d.telefono, correo_cliente:d.correo,
+          servicio:d.servicio, plaga:d.plaga, inmueble:`${d.inmueble} · ${d.tamano}`, direccion:d.direccionCompleta,
+          fecha:`${d.fecha} · ${d.horario}`, notas:d.notas || "—", total:currency(d.total), mensaje:textoFolio(d),
+        },
+      }),
+    });
+    return res.ok ? "enviado" : "error";
+  } catch { return "error"; }
+}
+
+/* Enlace de respaldo: abre el correo del usuario con el folio ya redactado */
+const mailtoFolio = (d) =>
+  `mailto:${EMAIL_EMPRESA}?subject=${encodeURIComponent(`Nueva solicitud ${d.folio}`)}&body=${encodeURIComponent(textoFolio(d))}`;
+
 /* Solicitudes de ejemplo: subtotal + IVA 16% = total (coherentes). Las canceladas no tienen técnico. */
 function buildMockSolicitudes() {
   return [
@@ -186,19 +326,79 @@ function HexMesh({ color = "#FFFFFF", opacity = 0.08, className = "", id }) {
   );
 }
 
+/* Íconos de plagas: línea limpia, mismo grosor y margen interno (no se salen del círculo) */
 function PestGlyph({ id, size = 40, stroke = "currentColor" }) {
-  const body = { fill:stroke, fillOpacity:0.14, stroke, strokeWidth:1.5, strokeLinecap:"round", strokeLinejoin:"round" };
+  const body = { fill:stroke, fillOpacity:0.1, stroke, strokeWidth:1.7, strokeLinecap:"round", strokeLinejoin:"round" };
+  const wing = { ...body, fillOpacity:0.05, strokeWidth:1.4 };
   const line = { fill:"none", stroke, strokeWidth:1.5, strokeLinecap:"round", strokeLinejoin:"round" };
-  const box  = (ch) => <svg width={size} height={size} viewBox="0 0 48 48">{ch}</svg>;
+  const dot  = { fill:stroke, stroke:"none" };
+  const box  = (ch) => <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">{ch}</svg>;
   switch (id) {
-    case "cucarachas": return box(<g><path {...line} d="M24 15 L18 6 M24 15 L30 6" /><ellipse {...body} cx="24" cy="27" rx="7.5" ry="13" /><path {...line} d="M17 21 L9 17 M31 21 L39 17 M17 27 L8 27 M31 27 L40 27 M17 33 L10 39 M31 33 L38 39" /></g>);
-    case "hormigas":   return box(<g><path {...line} d="M21 9 L16 4 M27 9 L32 4" /><circle {...body} cx="24" cy="12" r="4" /><circle {...body} cx="24" cy="20" r="3.4" /><ellipse {...body} cx="24" cy="32.5" rx="6.4" ry="8.3" /><path {...line} d="M21 18 L12 15 M27 18 L36 15 M21 21 L11 22 M27 21 L37 22 M22 25 L14 30 M26 25 L34 30" /></g>);
-    case "roedores":   return box(<g><path {...line} d="M38 30 Q46 27 45 19" /><circle {...body} cx="16" cy="10.5" r="4" /><circle {...body} cx="32" cy="10.5" r="4" /><circle {...body} cx="24" cy="19" r="8.5" /><circle cx="20.5" cy="18" r="1.1" fill={stroke} stroke="none" /><circle cx="27.5" cy="18" r="1.1" fill={stroke} stroke="none" /><path {...line} d="M15 21 L7 19 M15 24 L8 25 M33 21 L41 19 M33 24 L40 25" /><ellipse {...body} cx="24" cy="34" rx="11" ry="9.5" /></g>);
-    case "termitas":   return box(<g><path {...line} d="M21 9 L17 4 M27 9 L31 4" /><circle {...body} cx="24" cy="12" r="3.4" /><circle {...body} cx="24" cy="19.5" r="4.6" /><ellipse {...body} cx="15" cy="20.5" rx="9" ry="3.4" transform="rotate(-18 15 20.5)" fillOpacity="0.22" /><ellipse {...body} cx="33" cy="20.5" rx="9" ry="3.4" transform="rotate(18 33 20.5)" fillOpacity="0.22" /><ellipse {...body} cx="24" cy="30.5" rx="6" ry="8.6" /><path {...line} d="M20 24 L12 22 M28 24 L36 22 M20 30 L12 32 M28 30 L36 32 M21 35 L15 41 M27 35 L33 41" /></g>);
-    case "moscas":     return box(<g><circle {...body} cx="24" cy="14.5" r="4" /><ellipse {...body} cx="24" cy="27" rx="5" ry="8.6" /><ellipse {...body} cx="14" cy="21" rx="9.5" ry="5.6" transform="rotate(-24 14 21)" fillOpacity="0.2" /><ellipse {...body} cx="34" cy="21" rx="9.5" ry="5.6" transform="rotate(24 34 21)" fillOpacity="0.2" /><path {...line} d="M20 22 L11 20 M28 22 L37 20 M20 27 L11 28 M28 27 L37 28 M21 32 L15 39 M27 32 L33 39" /></g>);
-    case "mosquitos":  return box(<g><path {...line} d="M24 14 L24 5" /><circle {...body} cx="24" cy="17" r="2.8" /><ellipse {...body} cx="24" cy="29" rx="3.4" ry="9.5" /><ellipse {...body} cx="15.5" cy="19.5" rx="8" ry="3" transform="rotate(-22 15.5 19.5)" fillOpacity="0.18" /><ellipse {...body} cx="32.5" cy="19.5" rx="8" ry="3" transform="rotate(22 32.5 19.5)" fillOpacity="0.18" /><path {...line} d="M21 24 L10 20 M27 24 L38 20 M21 29 L9 30 M27 29 L39 30 M22 34 L13 43 M26 34 L35 43" /></g>);
-    case "aranas":     return box(<g><circle cx="20.5" cy="15.5" r="1" fill={stroke} stroke="none" /><circle cx="27.5" cy="15.5" r="1" fill={stroke} stroke="none" /><circle {...body} cx="24" cy="18" r="5.4" /><ellipse {...body} cx="24" cy="30" rx="8.6" ry="9.6" /><path {...line} d="M18 15 L8 9 L4 5 M18 19 L6 17 L2 21 M19 23 L7 25 L3 31 M20 27 L11 33 L9 39" /><path {...line} d="M30 15 L40 9 L44 5 M30 19 L42 17 L46 21 M29 23 L41 25 L45 31 M28 27 L37 33 L39 39" /></g>);
-    case "chinches":   return box(<g><path {...line} d="M21 12 L17 7 M27 12 L31 7" /><circle {...body} cx="24" cy="15.5" r="4" /><ellipse {...body} cx="24" cy="28" rx="12.5" ry="8.4" /><path {...line} d="M14 22 L6 18 M34 22 L42 18 M13 28 L4 28 M35 28 L44 28 M14 34 L7 40 M34 34 L41 40" /></g>);
+    case "cucarachas": return box(<g>
+      <path {...line} d="M22 10.5 Q19 6.5 15.5 7 M26 10.5 Q29 6.5 32.5 7" />
+      <circle {...body} cx="24" cy="13" r="3.6" />
+      <ellipse {...body} cx="24" cy="27.5" rx="8" ry="12.5" />
+      <path {...line} d="M24 17 V39" strokeWidth="1.2" opacity="0.55" />
+      <path {...line} d="M16.3 22 L10.5 19 M31.7 22 L37.5 19 M16 28 L9.5 28.5 M32 28 L38.5 28.5 M17 34 L11.5 38.5 M31 34 L36.5 38.5" />
+    </g>);
+    case "hormigas": return box(<g>
+      <path {...line} d="M22.6 8.6 L19.5 5.5 M25.4 8.6 L28.5 5.5" />
+      <circle {...body} cx="24" cy="11.5" r="3.3" />
+      <ellipse {...body} cx="24" cy="20" rx="3" ry="3.6" />
+      <ellipse {...body} cx="24" cy="32" rx="5.6" ry="7.8" />
+      <path {...line} d="M21.5 18.5 L14.5 14.5 M26.5 18.5 L33.5 14.5 M21 21 L13.5 22.5 M27 21 L34.5 22.5 M22 23 L16 29.5 M26 23 L32 29.5" />
+    </g>);
+    case "roedores": return box(<g>
+      <path {...line} d="M10.8 23.3 C8.4 17.8 13.4 15 15.4 21" />
+      <path {...line} d="M17.3 21.1 C16.8 15.2 23.2 14.2 24.6 19.9" />
+      <path {...body} d="M7.5 28.6 C7.8 24.6 11.5 21.3 16.5 21.1 C21 20.9 22.5 20 26 19.6 C33 19 38.6 23 38.8 29.5 C39 33.8 35.5 36 30.5 36 L22.5 36 C19.8 36 18.4 35 18.2 33.3 C15 33 10 32 8.3 30.6 C7.6 30 7.4 29.4 7.5 28.6 Z" />
+      <path {...line} d="M33.5 35 C30.4 33 30.4 28.6 33.5 26" strokeWidth="1.3" opacity="0.6" />
+      <path {...line} d="M38.4 32.8 C45.8 33.2 46 21 41.6 10.5" />
+      <path {...line} d="M17.5 33.6 L16.6 39 L13.4 39 M22.2 36 L22.6 39 L19.4 39 M32.6 36 L33 39 L37 39" />
+      <path {...line} d="M9.4 27.5 L4 25.6 M9.2 29 L3.8 30.2 M10.2 26.3 L5.6 22.6" strokeWidth="1.2" />
+      <circle {...dot} cx="15.8" cy="25.2" r="1.05" />
+      <circle {...dot} cx="7.9" cy="28.3" r="1.2" />
+    </g>);
+    case "termitas": return box(<g>
+      <path {...line} d="M22.7 8 L20 5 M25.3 8 L28 5" />
+      <circle {...body} cx="24" cy="10.8" r="3" />
+      <ellipse {...wing} cx="16.5" cy="22.5" rx="10" ry="2.7" transform="rotate(-38 16.5 22.5)" />
+      <ellipse {...wing} cx="31.5" cy="22.5" rx="10" ry="2.7" transform="rotate(38 31.5 22.5)" />
+      <ellipse {...body} cx="24" cy="17.8" rx="3.2" ry="3" />
+      <ellipse {...body} cx="24" cy="31.5" rx="5" ry="9" />
+    </g>);
+    case "moscas": return box(<g>
+      <ellipse {...wing} cx="16.8" cy="28" rx="10.5" ry="4" transform="rotate(-48 16.8 28)" />
+      <ellipse {...wing} cx="31.2" cy="28" rx="10.5" ry="4" transform="rotate(48 31.2 28)" />
+      <circle {...body} cx="24" cy="13.5" r="4.4" />
+      <circle {...dot} cx="21.3" cy="12.6" r="1.1" />
+      <circle {...dot} cx="26.7" cy="12.6" r="1.1" />
+      <ellipse {...body} cx="24" cy="27" rx="5.2" ry="8.8" />
+      <path {...line} d="M20.3 20.5 L15.5 17.5 M27.7 20.5 L32.5 17.5" />
+    </g>);
+    case "mosquitos": return box(<g>
+      <path {...line} d="M24 13.8 V6" />
+      <circle {...body} cx="24" cy="16.6" r="2.7" />
+      <ellipse {...wing} cx="17" cy="26" rx="10" ry="2.5" transform="rotate(-62 17 26)" />
+      <ellipse {...wing} cx="31" cy="26" rx="10" ry="2.5" transform="rotate(62 31 26)" />
+      <ellipse {...body} cx="24" cy="29" rx="2.9" ry="9.2" />
+      <path {...line} d="M22 22.5 L13 20 L9.5 26 M26 22.5 L35 20 L38.5 26 M21.5 30 L12 32.5 L9 39 M26.5 30 L36 32.5 L39 39" />
+    </g>);
+    case "aranas": return box(<g>
+      <circle {...body} cx="24" cy="19" r="3.8" />
+      <ellipse {...body} cx="24" cy="30" rx="6" ry="7.6" />
+      <circle {...dot} cx="22.6" cy="18" r="0.9" />
+      <circle {...dot} cx="25.4" cy="18" r="0.9" />
+      <path {...line} d="M20.6 17.2 Q13 9 8 12.5 M20.2 19.6 Q12 15.5 7 19.5 M20.4 22 Q12 22 8 28.5 M21 24 Q15 28.5 12.5 37" />
+      <path {...line} d="M27.4 17.2 Q35 9 40 12.5 M27.8 19.6 Q36 15.5 41 19.5 M27.6 22 Q36 22 40 28.5 M27 24 Q33 28.5 35.5 37" />
+    </g>);
+    case "chinches": return box(<g>
+      <path {...line} d="M22 14.2 L19.2 10.5 M26 14.2 L28.8 10.5" />
+      <ellipse {...body} cx="24" cy="17" rx="4.4" ry="3.2" />
+      <ellipse {...body} cx="24" cy="29" rx="11" ry="9.5" />
+      <path {...line} d="M14.6 27 Q24 30.5 33.4 27 M15.4 32.2 Q24 35.8 32.6 32.2" strokeWidth="1.2" opacity="0.55" />
+      <path {...line} d="M14 23.5 L7.5 20.5 M13 28.5 L6.5 29 M14.5 34 L9 38 M34 23.5 L40.5 20.5 M35 28.5 L41.5 29 M33.5 34 L39 38" />
+    </g>);
     default: return null;
   }
 }
@@ -607,6 +807,7 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
   const [form, setForm] = useState({ nombre:"", apellidoPaterno:"", apellidoMaterno:"", telefono:"", correo:"", confirmacionCorreo:"", calle:"", numero:"", colonia:"", codigoPostal:"", rfc:"", fecha:"", horario:"", notas:"" });
   const [errors, setErrors]   = useState({});
   const [confirmed, setConfirmed] = useState(null);
+  const [envio, setEnvio]       = useState("");   // "" | enviando | enviado | error | sin-configurar
   const result = quote.result;
   if (!result) return <section className="section empty-state"><Info size={28}/><h2>Primero arma tu cotización</h2><p>Necesitamos saber qué servicio necesitas antes de tomar tus datos.</p><button className="btn btn-accent" onClick={()=>setPage("cotizador")}>Ir al cotizador</button></section>;
   const update = (k, v) => {
@@ -632,7 +833,7 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
     if (!form.horario)            e.horario     = "Selecciona un horario.";
     setErrors(e); return Object.keys(e).length === 0;
   };
-  const submit = (ev) => {
+  const submit = async (ev) => {
     ev.preventDefault(); if (!validate()) return;
     const folio = nextFolio();
     const nombreCompleto = `${form.nombre.trim()} ${form.apellidoPaterno.trim()} ${form.apellidoMaterno.trim()}`;
@@ -644,8 +845,22 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
       rfc:form.rfc.trim().toUpperCase(),
     };
     addSolicitud(record, datosCliente);
-    setConfirmed({ ...record, direccionCompleta:`${datosCliente.calle} ${datosCliente.numero}, Col. ${datosCliente.colonia}, CP ${datosCliente.codigoPostal}` });
-    setToast("Solicitud registrada. Se notificó al encargado por correo.");
+    const comprobante = {
+      ...record,
+      telefono:datosCliente.telefono, correo:datosCliente.correo,
+      servicio:result.service.label, plaga:result.pest.label,
+      direccionCompleta:`${datosCliente.calle} ${datosCliente.numero}, Col. ${datosCliente.colonia}, CP ${datosCliente.codigoPostal}`,
+    };
+    setConfirmed(comprobante);
+    setEnvio("enviando");
+    setToast("Solicitud registrada.");
+    const estado = await enviarFolioAEmpresa(comprobante);
+    setEnvio(estado);
+    setToast(estado === "enviado" ? "Folio enviado al correo de la empresa." : "Solicitud registrada. El correo no se pudo enviar automáticamente.");
+  };
+  const descargarPdf = () => {
+    try { generarPdfComprobante(confirmed); setToast("Comprobante descargado."); }
+    catch (err) { console.error(err); setToast("No se pudo generar el PDF."); }
   };
   if (confirmed) return (
     <section className="section confirm-wrap">
@@ -662,10 +877,20 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
         <div className="ticket-row"><span>Subtotal</span><strong>{currency(confirmed.subtotal)}</strong></div>
         <div className="ticket-row"><span>IVA (16%)</span><strong>{currency(confirmed.iva)}</strong></div>
         <div className="ticket-row ticket-total"><span>Total estimado</span><strong>{currency(confirmed.total)}</strong></div>
-        <p className="ticket-note">Comprobante simulado — demo sin backend.</p>
+        <p className="ticket-note">Conserva este comprobante: el folio sirve para dar seguimiento a tu servicio.</p>
       </TicketFrame>
+      <div className={`envio-status envio-${envio}`}>
+        {envio === "enviando" && <span>Enviando folio a la empresa…</span>}
+        {envio === "enviado"  && <span><CircleCheck size={15}/> Folio enviado al correo de la empresa.</span>}
+        {(envio === "error" || envio === "sin-configurar") && (
+          <span>
+            <AlertTriangle size={15}/> {envio === "error" ? "No se pudo enviar el folio automáticamente." : "El envío automático aún no está configurado."}{" "}
+            <a href={mailtoFolio(confirmed)}>Enviarlo desde mi correo</a>
+          </span>
+        )}
+      </div>
       <div className="confirm-actions">
-        <button className="btn btn-outline" onClick={()=>setToast("En el sistema conectado, aquí se descargaría el PDF.")}><FileDown size={16}/> Descargar PDF</button>
+        <button className="btn btn-outline" onClick={descargarPdf}><FileDown size={16}/> Descargar PDF</button>
         <button className="btn btn-primary" onClick={()=>setPage("home")}>Volver al inicio</button>
       </div>
     </section>
@@ -1565,6 +1790,11 @@ body { display:block!important; place-items:unset!important; }
 .confirm-head p { margin-bottom:30px; }
 .confirm-ticket { width:100%; text-align:left; margin-bottom:26px; }
 .confirm-actions { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
+.envio-status { margin-bottom:18px; font-size:13px; }
+.envio-status span { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:center; color:var(--ink-soft); }
+.envio-enviado span { color:#1E5E24; font-weight:600; }
+.envio-error span, .envio-sin-configurar span { color:#8A5A00; }
+.envio-status a { color:var(--blue); font-weight:600; text-decoration:underline; }
 .empty-state { max-width:420px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:10px; }
 .empty-state svg { color:var(--teal-light); }
 .empty-state h2 { font-size:20px; }
