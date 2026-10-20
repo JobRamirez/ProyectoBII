@@ -762,8 +762,8 @@ function CotizadorPage({ quote, setQuote, setPage, setToast }) {
         {step===1 && <div className="option-grid">{PROPERTY_TYPES.map((p) => <button key={p.id} className={`option-card ${sel.propertyId===p.id?"is-selected":""}`} onClick={()=>setSel({propertyId:p.id})}><p.icon size={22}/><div><strong>{p.label}</strong><span>{p.hint}</span></div>{sel.propertyId===p.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
         {/* Al elegir la plaga se preselecciona el servicio recomendado */}
         {step===2 && <div className="option-grid option-grid-pest">{PESTS.map((p) => <button key={p.id} className={`option-card ${sel.pestId===p.id?"is-selected":""}`} onClick={()=>setSel({pestId:p.id, serviceId:p.servicio})}><span className="pest-glyph"><PestGlyph id={p.id} size={34}/></span><div><strong>{p.label}</strong><span>{p.signos[0]}</span></div>{sel.pestId===p.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
-        {step===3 && <div className="option-grid">{SIZES.map((s) => <button key={s.id} className={`option-card ${sel.sizeId===s.id?"is-selected":""}`} onClick={()=>setSel({sizeId:s.id})}><span className="size-tag">m²</span><div><strong>{s.label}</strong><span>{s.desc}</span></div>{sel.sizeId===s.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
-        {step===4 && <div className="option-grid">{SERVICES.map((s) => <button key={s.id} className={`option-card option-card-wide ${sel.serviceId===s.id?"is-selected":""}`} onClick={()=>setSel({serviceId:s.id})}><span className="service-code">{s.code}</span><div><strong>{s.label} {s.id===recomendado && <em className="dim" style={{ color:"#00695C", fontStyle:"normal", fontWeight:600 }}>· Recomendado para esta plaga</em>}</strong><span>{s.desc}</span></div>{sel.serviceId===s.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
+        {step===3 && <div className="option-grid">{SIZES.map((s) => <button key={s.id} className={`option-card ${sel.sizeId===s.id?"is-selected":""}`} onClick={()=>setSel({sizeId:s.id})}><span className="size-tag notranslate" translate="no">m²</span><div><strong>{s.label}</strong><span>{s.desc}</span></div>{sel.sizeId===s.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
+        {step===4 && <div className="option-grid">{SERVICES.map((s) => <button key={s.id} className={`option-card option-card-wide ${sel.serviceId===s.id?"is-selected":""}`} onClick={()=>setSel({serviceId:s.id})}><span className="service-code notranslate" translate="no">{s.code}</span><div><strong>{s.label} {s.id===recomendado && <em className="dim" style={{ color:"#00695C", fontStyle:"normal", fontWeight:600 }}>· Recomendado para esta plaga</em>}</strong><span>{s.desc}</span></div>{sel.serviceId===s.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
         {step===5 && result && (
           <div className="result-wrap">
             <TicketFrame className="result-ticket">
@@ -867,7 +867,7 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
       <div className="confirm-head"><CircleCheck size={30}/><h1>Solicitud confirmada</h1><p>Guarda tu folio: te servirá para dar seguimiento al servicio.</p></div>
       <TicketFrame className="confirm-ticket">
         <div className="ticket-head"><span>COMPROBANTE DE SOLICITUD</span><ShieldCheck size={16}/></div>
-        <div className="ticket-folio">{confirmed.folio}</div>
+        <div className="ticket-folio notranslate" translate="no">{confirmed.folio}</div>
         <div className="ticket-row"><span>Cliente</span><strong>{confirmed.cliente}</strong></div>
         <div className="ticket-row"><span>Servicio</span><strong>{result.service.label}</strong></div>
         <div className="ticket-row"><span>Inmueble</span><strong>{confirmed.inmueble} · {confirmed.tamano}</strong></div>
