@@ -14,55 +14,45 @@ import {
 import { jsPDF } from "jspdf";
 
 /* ============================================================
-   DATOS DE REFERENCIA (constantes)
+   CONEXIÓN CON LA API (PHP + MySQL)
    ============================================================ */
 
-const PROPERTY_TYPES = [
-  { id: "casa",        label: "Casa habitación",         hint: "Vivienda unifamiliar",    icon: HomeIcon,        mult: 1.0  },
-  { id: "depto",       label: "Departamento",             hint: "Unidad en edificio",      icon: Building2,       mult: 0.85 },
-  { id: "oficina",     label: "Oficina",                  hint: "Espacio de trabajo",      icon: Store,           mult: 1.15 },
-  { id: "bodega",      label: "Bodega / Local comercial", hint: "Nave o local",            icon: Warehouse,       mult: 1.6  },
-  { id: "restaurante", label: "Restaurante / Cocina",     hint: "Servicio de alimentos",   icon: UtensilsCrossed, mult: 1.35 },
-];
+/* Dirección de la API. Si tu carpeta se llama distinto, cámbiala aquí
+   o crea un archivo .env con:  VITE_API_URL=http://localhost/marronking/api */
+const API_URL = (import.meta.env && import.meta.env.VITE_API_URL) || "http://localhost/marronking/api";
 
-const PESTS = [
-  { id: "cucarachas", label: "Cucarachas", surcharge: 0,   signos: ["Excremento como granos de café molido","Olor persistente a humedad","Actividad nocturna en cocina y baños"],                                     servicio: "fumigacion"    },
-  { id: "hormigas",   label: "Hormigas",   surcharge: 0,   signos: ["Columnas visibles hacia una fuente de comida","Montículos de tierra cerca de cimientos","Rastros repetidos sobre una misma ruta"],               servicio: "fumigacion"    },
-  { id: "roedores",   label: "Roedores",   surcharge: 100, signos: ["Excremento pequeño y oscuro","Ruidos dentro de muros o plafones","Cables o empaques roídos"],                                                    servicio: "desratizacion" },
-  { id: "termitas",   label: "Termitas",   surcharge: 450, signos: ["Madera que suena hueca al golpear","Alas desprendidas cerca de ventanas","Túneles de lodo en muros o pisos"],                                   servicio: "termitas"      },
-  { id: "moscas",     label: "Moscas",     surcharge: 0,   signos: ["Acumulación cerca de basura o materia orgánica","Larvas visibles en zonas húmedas","Actividad elevada cerca de cocinas"],                       servicio: "sanitizacion"  },
-  { id: "mosquitos",  label: "Mosquitos",  surcharge: 0,   signos: ["Agua estancada cerca de la propiedad","Picaduras frecuentes al atardecer","Zumbido en espacios cerrados"],                                      servicio: "fumigacion"    },
-  { id: "aranas",     label: "Arañas",     surcharge: 50,  signos: ["Telarañas visibles en esquinas y rincones","Mayor actividad en temporada cálida","Presencia de otras plagas pequeñas de las que se alimentan"],  servicio: "fumigacion"    },
-  { id: "chinches",   label: "Chinches",   surcharge: 300, signos: ["Manchas de sangre pequeñas en sábanas","Picaduras alineadas en la piel","Puntos oscuros en costuras de colchón"],                               servicio: "fumigacion"    },
-];
+class ApiErr extends Error {
+  constructor(message, status = 0, campos = {}) { super(message); this.status = status; this.campos = campos; }
+}
 
-const SIZES = [
-  { id: "chico",  label: "Hasta 50 m²",    desc: "Espacio compacto",         mult: 1.0 },
-  { id: "medio",  label: "50 – 150 m²",    desc: "Tamaño estándar",          mult: 1.5 },
-  { id: "grande", label: "150 – 300 m²",   desc: "Espacio amplio",           mult: 2.1 },
-  { id: "xl",     label: "Más de 300 m²",  desc: "Nave o propiedad extensa", mult: 3.0 },
-];
+async function api(ruta, { method = "GET", body } = {}) {
+  const opciones = { method, credentials: "include" };
+  if (method !== "GET") {
+    opciones.headers = { "Content-Type": "application/json", "X-Requested-With": "fetch" };
+    if (body !== undefined) opciones.body = JSON.stringify(body);
+  }
+  let res;
+  try { res = await fetch(`${API_URL}${ruta}`, opciones); }
+  catch { throw new ApiErr("No se pudo conectar con el servidor. Verifica que Apache y MySQL estén encendidos.", 0); }
+  let data = null;
+  try { data = await res.json(); } catch { /* respuesta sin JSON */ }
+  if (!res.ok) {
+    throw new ApiErr(data?.error || `Error del servidor (${res.status}).`, res.status, data?.campos && !Array.isArray(data.campos) ? data.campos : {});
+  }
+  return data;
+}
 
-const SERVICES = [
-  { id: "fumigacion",    label: "Fumigación general",         code: "FG", base: 850,  desc: "Aplicación de barrera contra insectos rastreros y voladores." },
-  { id: "desratizacion", label: "Desratización",              code: "DR", base: 950,  desc: "Control y eliminación de roedores con cebado seguro."          },
-  { id: "termitas",      label: "Control de termitas",        code: "CT", base: 1600, desc: "Tratamiento localizado y preventivo en estructuras de madera."  },
-  { id: "sanitizacion",  label: "Sanitización y desinfección",code: "SD", base: 750,  desc: "Reducción de carga microbiana en superficies y ambiente."       },
-  { id: "recurrente",    label: "Plan recurrente",            code: "PR", base: 650,  desc: "Visitas periódicas para mantener el control a largo plazo."     },
-];
-
-const HORARIOS = ["08:00 – 10:00","10:00 – 12:00","12:00 – 14:00","14:00 – 16:00","16:00 – 18:00"];
-const ESTADOS  = ["Pendiente","Confirmado","En proceso","Completado","Cancelado"];
-const ESTADOS_CERRADOS = ["Completado","Cancelado"];
-const ESTADOS_REQUIEREN_TECNICO = ["Confirmado","En proceso","Completado"];
+/* Estados: 1 Pendiente · 2 Confirmado · 3 En proceso · 4 Completado · 5 Cancelado */
+const ESTADOS_CERRADOS = [4, 5];
+const ESTADOS_REQUIEREN_TECNICO = [2, 3, 4];
 const UNIDADES = ["L","kg","piezas","bloques","cajas"];
 const ZONAS = ["Monterrey","San Nicolás de los Garza","Guadalupe","Apodaca","General Escobedo","Santa Catarina","San Pedro Garza García","García","Juárez"];
 
-/* ── Validadores reutilizables (técnicos y proveedores) ── */
+/* ── Validadores reutilizables ── */
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 const soloDigitos = (v) => String(v||"").replace(/\D/g,"");
 const RFC_RE = /^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/i;
-const MESES_CORTOS = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+const fmtTel = (t) => { const d = soloDigitos(t); return d.length === 10 ? `${d.slice(0,2)} ${d.slice(2,6)} ${d.slice(6)}` : (t || ""); };
 
 const ESTADO_STYLE = {
   "Pendiente":  { bg: "#FFF4E0", fg: "#8A5A00", dot: "#E8A33D" },
@@ -72,50 +62,17 @@ const ESTADO_STYLE = {
   "Cancelado":  { bg: "#FBEAEA", fg: "#8A2626", dot: "#C1473F" },
 };
 
-/* ── Datos iniciales (se mueven a estado en App) ── */
-const CLIENTES_MOCK = [
-  { id:"C-1042", nombre:"Laura",         apellidoPaterno:"Villarreal",  apellidoMaterno:"Garza",   telefono:"81 2234 5510", correo:"laura.villarreal@mail.com",  calle:"Priv. Cedros",     numero:"118",  colonia:"Contry",           codigoPostal:"64860", rfc:"VIGL850312AB3" },
-  { id:"C-1043", nombre:"Grupo",         apellidoPaterno:"Alimentario", apellidoMaterno:"Norte",   telefono:"81 8890 2201", correo:"compras@gruponorte.mx",       calle:"Blvd. Industrial", numero:"2400", colonia:"Parque Industrial", codigoPostal:"66600", rfc:"GAN010101XY0" },
-  { id:"C-1044", nombre:"Ricardo",       apellidoPaterno:"Elizondo",    apellidoMaterno:"Leal",    telefono:"81 1123 4478", correo:"r.elizondo@mail.com",         calle:"Av. Eugenio Garza",numero:"550",  colonia:"Valle Oriente",    codigoPostal:"66260", rfc:"EILR900228CD5" },
-  { id:"C-1045", nombre:"Consultorio",   apellidoPaterno:"Dental",      apellidoMaterno:"Reyes",   telefono:"81 3345 9987", correo:"contacto@dentalreyes.mx",     calle:"Calle Morelos",    numero:"88",   colonia:"Centro",           codigoPostal:"64000", rfc:"CDR030303EF7" },
-  { id:"C-1046", nombre:"María Fernanda",apellidoPaterno:"Cantú",       apellidoMaterno:"Flores",  telefono:"81 2290 1156", correo:"mfcantu@mail.com",            calle:"Calle Roble",      numero:"340",  colonia:"Del Valle",        codigoPostal:"66220", rfc:"CAFM950714GH1" },
-];
+/* Ícono de cada tipo de inmueble (el nombre viene de la base de datos) */
+const INMUEBLE_ICONS = {
+  "Casa habitación": HomeIcon, "Departamento": Building2, "Oficina": Store,
+  "Bodega / Local comercial": Warehouse, "Restaurante / Cocina": UtensilsCrossed,
+};
 
-const TECNICOS_INIT = [
-  { id:"T-01", nombre:"Carlos",    apellidoPaterno:"Mendoza",  apellidoMaterno:"Ríos",   telefono:"81 4411 2233", correo:"c.mendoza@marronking.mx",  rfc:"MERC880415JK2", nss:"12858801234", sucursal:"Monterrey",          contactoEmergenciaNombre:"Laura Ríos",      contactoEmergenciaTelefono:"81 1200 3401", especialidad:"Fumigación general"   },
-  { id:"T-02", nombre:"Sofía",     apellidoPaterno:"Torres",   apellidoMaterno:"Leal",   telefono:"81 4422 3344", correo:"s.torres@marronking.mx",   rfc:"TOLS920711LM4", nss:"12929202345", sucursal:"San Nicolás de los Garza", contactoEmergenciaNombre:"Jorge Torres",    contactoEmergenciaTelefono:"81 1200 3402", especialidad:"Desratización"        },
-  { id:"T-03", nombre:"Alejandro", apellidoPaterno:"Pérez",    apellidoMaterno:"Vega",   telefono:"81 4433 4455", correo:"a.perez@marronking.mx",    rfc:"PEVA850920NP6", nss:"12858503456", sucursal:"Guadalupe",          contactoEmergenciaNombre:"Marta Vega",      contactoEmergenciaTelefono:"81 1200 3403", especialidad:"Control de termitas"  },
-  { id:"T-04", nombre:"Valeria",   apellidoPaterno:"Guzmán",   apellidoMaterno:"Cruz",   telefono:"81 4444 5566", correo:"v.guzman@marronking.mx",   rfc:"GUCV990303QR8", nss:"12999904567", sucursal:"Apodaca",            contactoEmergenciaNombre:"Luis Guzmán",     contactoEmergenciaTelefono:"81 1200 3404", especialidad:"Sanitización y desinfección" },
-];
-
-const PROVEEDORES_INIT = [
-  { id:"PR-01", nombre:"QuimPlag S.A.",       telefono:"81 5500 1100", direccion:"Blvd. Morones Prieto 340, Monterrey", categoriaProveedor:"Químicos",        correo:"ventas@quimplag.mx",     rfc:"QPL010201ST0" },
-  { id:"PR-02", nombre:"EcoFumex",            telefono:"81 5511 2211", direccion:"Av. Revolución 780, García NL",       categoriaProveedor:"Equipos",         correo:"contacto@ecofumex.mx",   rfc:"EFU030303UV1" },
-  { id:"PR-03", nombre:"Distribuidora Norvet",telefono:"81 5522 3322", direccion:"Calle Saltillo 120, Apodaca NL",      categoriaProveedor:"Cebos y trampas", correo:"norvet@norvet.mx",       rfc:"DNO060606WX2" },
-];
-
-/* cantidad + unidad + minimo: cada insumo se mide en su propia unidad y tiene su propio mínimo */
-const MATERIA_PRIMA_INIT = [
-  { id:"MP-01", nombre:"Insecticida Cipermetrina 25%",  descripcion:"Concentrado emulsionable de amplio espectro", cantidad:48,  unidad:"L",       minimo:20, precioMateriaPrima:320,  proveedorId:"PR-01" },
-  { id:"MP-02", nombre:"Rodenticida Brodifacoum",        descripcion:"Cebo en bloque para control de roedores",     cantidad:120, unidad:"bloques", minimo:40, precioMateriaPrima:85,   proveedorId:"PR-03" },
-  { id:"MP-03", nombre:"Fumigante Sulfuryl Fluoride",    descripcion:"Gas para tratamiento de termitas en madera",  cantidad:12,  unidad:"kg",      minimo:10, precioMateriaPrima:1200, proveedorId:"PR-01" },
-  { id:"MP-04", nombre:"Desinfectante Cuaternario",      descripcion:"Amonio cuaternario de 4ta generación",        cantidad:60,  unidad:"L",       minimo:20, precioMateriaPrima:240,  proveedorId:"PR-02" },
-  { id:"MP-05", nombre:"Equipo de Aspersión 16L",        descripcion:"Mochila aspersora con bomba de presión",      cantidad:8,   unidad:"piezas",  minimo:3,  precioMateriaPrima:2800, proveedorId:"PR-02" },
-];
-
-const USUARIOS_MOCK = [
-  { correo:"admin@marronking.mx",    contrasena:"admin123",   rol:"Administrador", nombre:"Diego Ramírez" },
-  { correo:"encargado@marronking.mx",contrasena:"usuario123", rol:"Usuario",       nombre:"Ana Herrera"   },
-];
-
-let tecnicoCounter  = 10;
-let proveedorCounter= 10;
-let mpCounter       = 10;
-let clienteCounter  = 1046;
-const nextTecId     = () => `T-${String(++tecnicoCounter).padStart(2,"0")}`;
-const nextPrId      = () => `PR-${String(++proveedorCounter).padStart(2,"0")}`;
-const nextMpId      = () => `MP-${String(++mpCounter).padStart(2,"0")}`;
-const nextClienteId = () => `C-${++clienteCounter}`;
+/* Dibujo de cada plaga según su nombre en la base de datos */
+const glyphKey = (nombre = "") => {
+  const n = nombre.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  return n.startsWith("chinch") ? "chinches" : n;
+};
 
 /* ============================================================
    UTILIDADES
@@ -137,31 +94,33 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 
-function computeQuote({ propertyId, pestId, sizeId, serviceId }) {
-  const prop    = PROPERTY_TYPES.find((p) => p.id === propertyId);
-  const pest    = PESTS.find((p)    => p.id === pestId);
-  const size    = SIZES.find((s)    => s.id === sizeId);
-  const service = SERVICES.find((s) => s.id === serviceId);
+/* Cotización en pantalla (vista previa instantánea). Usa los precios y multiplicadores
+   del catálogo de la base de datos; el servidor vuelve a calcular el precio al guardar. */
+function computeQuote({ propertyId, pestId, sizeId, serviceId }, cat) {
+  const prop    = cat.inmuebles.find((p) => p.id === propertyId);
+  const pest    = cat.plagas.find((p)    => p.id === pestId);
+  const size    = cat.tamanos.find((s)   => s.id === sizeId);
+  const service = cat.servicios.find((s) => s.id === serviceId);
   if (!prop || !pest || !size || !service) return null;
-  const raw      = service.base * size.mult * prop.mult + pest.surcharge;
+  const raw      = service.precio_base * size.multiplicador * prop.multiplicador + pest.recargo;
   const subtotal = Math.round(raw / 10) * 10;
-  const iva      = calcIva(subtotal);
-  const total    = subtotal + iva;
+  const promo = (cat.promociones || [])
+    .filter((p) => (p.plaga_id == null || p.plaga_id === pest.id) && (p.inmueble_id == null || p.inmueble_id === prop.id))
+    .sort((a, b) => b.descuento_porcentaje - a.descuento_porcentaje)[0] || null;
+  const descuento = promo ? Math.round(subtotal * promo.descuento_porcentaje / 100) : 0;
+  const iva      = Math.round((subtotal - descuento) * (cat.iva ?? IVA_RATE));
+  const total    = subtotal - descuento + iva;
   const low      = Math.round((total * 0.92) / 10) * 10;
   const high     = Math.round((total * 1.08) / 10) * 10;
-  return { prop, pest, size, service, subtotal, iva, total, low, high };
+  return { prop, pest, size, service, subtotal, descuento, promo, iva, total, low, high };
 }
-
-let folioCounter = 4200;
-function nextFolio() { folioCounter += 1; return `MK-2026-${String(folioCounter).padStart(5,"0")}`; }
 
 /* ============================================================
    COMPROBANTE PDF + ENVÍO DE FOLIO POR CORREO
    ============================================================ */
 
 /* ▼▼ CONFIGURA ESTO ▼▼ */
-const EMAIL_EMPRESA = "ventas@marronking.mx";          // correo de la empresa que recibe cada folio
-const EMAILJS = { serviceId:"", templateId:"", publicKey:"" };   // datos de tu cuenta de EmailJS (emailjs.com)
+const EMAIL_EMPRESA = "ventas@marronking.mx";   // correo de la empresa (usado en el enlace de respaldo)
 /* ▲▲ ─────────────── ▲▲ */
 
 /* Genera y descarga el comprobante en PDF (diseño de ticket con muescas) */
@@ -189,7 +148,8 @@ function generarPdfComprobante(d) {
   const altoFila = (n) => n * 4.4 + 2.8;
   const altoFilas = lineas.reduce((a, l) => a + altoFila(l.length), 0);
   const nota = "Estimado no vinculante. El precio final se confirma al agendar la visita.";
-  const HEAD = 30, FOLIO = 22, DIV = 12, TOTALES = 27, NOTA = 14, FOOT = 14;
+  const filasTot = [["Subtotal", fmt(d.subtotal)], ...((d.descuento || 0) > 0 ? [["Descuento", "-" + fmt(d.descuento)]] : []), ["IVA (16%)", fmt(d.iva)]];
+  const HEAD = 30, FOLIO = 22, DIV = 12, TOTALES = 14 + filasTot.length * 6.5, NOTA = 14, FOOT = 14;
   const CH = HEAD + FOLIO + altoFilas + DIV + TOTALES + NOTA + FOOT;
 
   // Fondo y tarjeta
@@ -230,7 +190,7 @@ function generarPdfComprobante(d) {
   // Totales
   y += 9;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
-  [["Subtotal", fmt(d.subtotal)], ["IVA (16%)", fmt(d.iva)]].forEach(([k, v]) => {
+  filasTot.forEach(([k, v]) => {
     doc.setTextColor(...soft); doc.setFont("helvetica", "normal"); doc.text(k, CX + PAD, y);
     doc.setTextColor(...ink);  doc.setFont("helvetica", "bold");   doc.text(v, CX + CW - PAD, y, { align:"right" });
     y += 6.5;
@@ -264,48 +224,15 @@ function textoFolio(d) {
     d.notas ? `Notas:     ${d.notas}` : null,
     ``,
     `Subtotal: ${currency(d.subtotal)}`,
+    (d.descuento || 0) > 0 ? `Descuento: -${currency(d.descuento)}` : null,
     `IVA (16%): ${currency(d.iva)}`,
     `Total estimado: ${currency(d.total)}`,
   ].filter((l) => l !== null).join("\n");
 }
 
-/* Envía el folio al correo de la empresa vía EmailJS. Devuelve: "enviado" | "error" | "sin-configurar" */
-async function enviarFolioAEmpresa(d) {
-  const { serviceId, templateId, publicKey } = EMAILJS;
-  if (!serviceId || !templateId || !publicKey) return "sin-configurar";
-  try {
-    const res = await fetch("https://api.emailjs.com/api/v1.0/email/send", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({
-        service_id:serviceId, template_id:templateId, user_id:publicKey,
-        template_params:{
-          to_email:EMAIL_EMPRESA, folio:d.folio, cliente:d.cliente, telefono:d.telefono, correo_cliente:d.correo,
-          servicio:d.servicio, plaga:d.plaga, inmueble:`${d.inmueble} · ${d.tamano}`, direccion:d.direccionCompleta,
-          fecha:`${d.fecha} · ${d.horario}`, notas:d.notas || "—", total:currency(d.total), mensaje:textoFolio(d),
-        },
-      }),
-    });
-    return res.ok ? "enviado" : "error";
-  } catch { return "error"; }
-}
-
 /* Enlace de respaldo: abre el correo del usuario con el folio ya redactado */
 const mailtoFolio = (d) =>
   `mailto:${EMAIL_EMPRESA}?subject=${encodeURIComponent(`Nueva solicitud ${d.folio}`)}&body=${encodeURIComponent(textoFolio(d))}`;
-
-/* Solicitudes de ejemplo: subtotal + IVA 16% = total (coherentes). Las canceladas no tienen técnico. */
-function buildMockSolicitudes() {
-  return [
-    { folio:"MK-2026-04129", clienteId:"C-1042", cliente:"Laura Villarreal",        servicioId:"fumigacion",   inmueble:"Casa habitación",          tamano:"50 – 150 m²",    fecha:"2026-08-14", horario:"10:00 – 12:00", estado:"Completado",  ...money(1140), tecnicoId:"T-01" },
-    { folio:"MK-2026-04155", clienteId:"C-1043", cliente:"Grupo Alimentario Norte", servicioId:"sanitizacion", inmueble:"Bodega / Local comercial",  tamano:"Más de 300 m²",  fecha:"2026-08-19", horario:"08:00 – 10:00", estado:"Completado",  ...money(2470), tecnicoId:"T-04" },
-    { folio:"MK-2026-04178", clienteId:"C-1044", cliente:"Ricardo Elizondo",         servicioId:"fumigacion",   inmueble:"Departamento",              tamano:"Hasta 50 m²",    fecha:"2026-08-21", horario:"14:00 – 16:00", estado:"En proceso",  ...money(850),  tecnicoId:"T-01" },
-    { folio:"MK-2026-04182", clienteId:"C-1045", cliente:"Consultorio Dental Reyes",servicioId:"desratizacion",inmueble:"Oficina",                   tamano:"50 – 150 m²",    fecha:"2026-08-23", horario:"12:00 – 14:00", estado:"Confirmado",  ...money(1350), tecnicoId:"T-02" },
-    { folio:"MK-2026-04190", clienteId:"C-1046", cliente:"María Fernanda Cantú",    servicioId:"termitas",     inmueble:"Casa habitación",           tamano:"150 – 300 m²",   fecha:"2026-08-25", horario:"10:00 – 12:00", estado:"Pendiente",   ...money(2780), tecnicoId:null   },
-    { folio:"MK-2026-04193", clienteId:"C-1043", cliente:"Grupo Alimentario Norte", servicioId:"recurrente",   inmueble:"Bodega / Local comercial",  tamano:"Más de 300 m²",  fecha:"2026-08-27", horario:"08:00 – 10:00", estado:"Pendiente",   ...money(1790), tecnicoId:null   },
-    { folio:"MK-2026-04101", clienteId:"C-1042", cliente:"Laura Villarreal",        servicioId:"fumigacion",   inmueble:"Casa habitación",           tamano:"50 – 150 m²",    fecha:"2026-07-30", horario:"16:00 – 18:00", estado:"Cancelado",   ...money(1040), tecnicoId:null   },
-  ];
-}
 
 /* ============================================================
    HEX MESH
@@ -692,15 +619,20 @@ function HomePage({ setPage }) {
    ============================================================ */
 
 function LoginPage({ setPage, onLogin }) {
-  const [correo, setCorreo]           = useState("");
-  const [contrasena, setContrasena]   = useState("");
-  const [error, setError]             = useState("");
-  const submit = (e) => {
+  const [correo, setCorreo]         = useState("");
+  const [contrasena, setContrasena] = useState("");
+  const [error, setError]           = useState("");
+  const [enviando, setEnviando]     = useState(false);
+  const submit = async (e) => {
     e.preventDefault();
-    const mail = correo.trim().toLowerCase();
-    const u = USUARIOS_MOCK.find((u) => u.correo === mail && u.contrasena === contrasena);
-    if (!u) { setError("Correo o contraseña incorrectos."); return; }
-    onLogin(u); setPage("admin");
+    if (enviando) return;
+    setEnviando(true);
+    try {
+      const r = await api("/auth/login", { method:"POST", body:{ correo:correo.trim(), contrasena } });
+      onLogin(r.usuario); setPage("admin");
+    } catch (err) {
+      setError(err.message); setEnviando(false);
+    }
   };
   return (
     <section className="section login-wrap">
@@ -710,10 +642,29 @@ function LoginPage({ setPage, onLogin }) {
           <label>Correo electrónico<div className="input-wrap"><Mail size={16}/><input type="email" value={correo} onChange={(e)=>{setCorreo(e.target.value); setError("");}} placeholder="correo@marronking.mx"/></div></label>
           <label>Contraseña<div className="input-wrap"><Lock size={16}/><input type="password" value={contrasena} onChange={(e)=>{setContrasena(e.target.value); setError("");}} placeholder="••••••••"/></div></label>
           {error && <span className="field-error">{error}</span>}
-          <button className="btn btn-accent btn-lg" type="submit" style={{ marginTop:6 }}>Iniciar sesión <ArrowRight size={16}/></button>
+          <button className="btn btn-accent btn-lg" type="submit" disabled={enviando} style={{ marginTop:6 }}>{enviando ? "Entrando…" : <>Iniciar sesión <ArrowRight size={16}/></>}</button>
         </form>
         <p className="login-hint">Demo: <code>admin@marronking.mx</code> / <code>admin123</code></p>
       </div>
+    </section>
+  );
+}
+
+/* Muestra "cargando" o el error de conexión mientras llega el catálogo de la base de datos */
+function CatalogGate({ cat, error, onRetry, children }) {
+  if (cat) return children;
+  return (
+    <section className="section empty-state">
+      {error ? (
+        <>
+          <AlertTriangle size={28}/>
+          <h2>No se pudo conectar con el servidor</h2>
+          <p>{error}</p>
+          <button className="btn btn-accent" onClick={onRetry}>Reintentar</button>
+        </>
+      ) : (
+        <><Clock size={28}/><h2>Cargando…</h2></>
+      )}
     </section>
   );
 }
@@ -722,14 +673,14 @@ function LoginPage({ setPage, onLogin }) {
    COTIZADOR — 5 PASOS
    ============================================================ */
 
-function CotizadorPage({ quote, setQuote, setPage, setToast }) {
+function CotizadorPage({ cat, quote, setQuote, setPage, setToast }) {
   const [step, setStep] = useState(1);
   const totalSteps = 5;
   const sel    = quote.selections;
   const setSel = (patch) => setQuote((q) => ({ ...q, selections:{ ...q.selections, ...patch } }));
   const canNext = { 1:!!sel.propertyId, 2:!!sel.pestId, 3:!!sel.sizeId, 4:!!sel.serviceId, 5:true }[step];
-  const result  = useMemo(() => computeQuote(sel), [sel]);
-  const recomendado = PESTS.find((p) => p.id === sel.pestId)?.servicio;
+  const result  = useMemo(() => computeQuote(sel, cat), [sel, cat]);
+  const recomendado = cat.plagas.find((p) => p.id === sel.pestId)?.servicio_id;
   const goSolicitar = () => {
     if (!result) return;
     setQuote((q) => ({ ...q, result }));
@@ -759,21 +710,22 @@ function CotizadorPage({ quote, setQuote, setPage, setToast }) {
         })}
       </div>
       <div className="quoter-body">
-        {step===1 && <div className="option-grid">{PROPERTY_TYPES.map((p) => <button key={p.id} className={`option-card ${sel.propertyId===p.id?"is-selected":""}`} onClick={()=>setSel({propertyId:p.id})}><p.icon size={22}/><div><strong>{p.label}</strong><span>{p.hint}</span></div>{sel.propertyId===p.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
+        {step===1 && <div className="option-grid">{cat.inmuebles.map((p) => { const Icon = INMUEBLE_ICONS[p.tipo] || Building2; return <button key={p.id} className={`option-card ${sel.propertyId===p.id?"is-selected":""}`} onClick={()=>setSel({propertyId:p.id})}><Icon size={22}/><div><strong>{p.tipo}</strong><span>{p.descripcion}</span></div>{sel.propertyId===p.id&&<Check className="option-check" size={16}/>}</button>; })}</div>}
         {/* Al elegir la plaga se preselecciona el servicio recomendado */}
-        {step===2 && <div className="option-grid option-grid-pest">{PESTS.map((p) => <button key={p.id} className={`option-card ${sel.pestId===p.id?"is-selected":""}`} onClick={()=>setSel({pestId:p.id, serviceId:p.servicio})}><span className="pest-glyph"><PestGlyph id={p.id} size={34}/></span><div><strong>{p.label}</strong><span>{p.signos[0]}</span></div>{sel.pestId===p.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
-        {step===3 && <div className="option-grid">{SIZES.map((s) => <button key={s.id} className={`option-card ${sel.sizeId===s.id?"is-selected":""}`} onClick={()=>setSel({sizeId:s.id})}><span className="size-tag notranslate" translate="no">m²</span><div><strong>{s.label}</strong><span>{s.desc}</span></div>{sel.sizeId===s.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
-        {step===4 && <div className="option-grid">{SERVICES.map((s) => <button key={s.id} className={`option-card option-card-wide ${sel.serviceId===s.id?"is-selected":""}`} onClick={()=>setSel({serviceId:s.id})}><span className="service-code notranslate" translate="no">{s.code}</span><div><strong>{s.label} {s.id===recomendado && <em className="dim" style={{ color:"#00695C", fontStyle:"normal", fontWeight:600 }}>· Recomendado para esta plaga</em>}</strong><span>{s.desc}</span></div>{sel.serviceId===s.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
+        {step===2 && <div className="option-grid option-grid-pest">{cat.plagas.map((p) => <button key={p.id} className={`option-card ${sel.pestId===p.id?"is-selected":""}`} onClick={()=>setSel({pestId:p.id, serviceId:p.servicio_id ?? sel.serviceId})}><span className="pest-glyph"><PestGlyph id={glyphKey(p.nombre)} size={34}/></span><div><strong>{p.nombre}</strong><span>{p.signos[0]}</span></div>{sel.pestId===p.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
+        {step===3 && <div className="option-grid">{cat.tamanos.map((s) => <button key={s.id} className={`option-card ${sel.sizeId===s.id?"is-selected":""}`} onClick={()=>setSel({sizeId:s.id})}><span className="size-tag">m²</span><div><strong>{s.rango_m2}</strong><span>{s.descripcion}</span></div>{sel.sizeId===s.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
+        {step===4 && <div className="option-grid">{cat.servicios.map((s) => <button key={s.id} className={`option-card option-card-wide ${sel.serviceId===s.id?"is-selected":""}`} onClick={()=>setSel({serviceId:s.id})}><span className="service-code">{s.codigo}</span><div><strong>{s.nombre} {s.id===recomendado && <em className="dim" style={{ color:"#00695C", fontStyle:"normal", fontWeight:600 }}>· Recomendado para esta plaga</em>}</strong><span>{s.descripcion}</span></div>{sel.serviceId===s.id&&<Check className="option-check" size={16}/>}</button>)}</div>}
         {step===5 && result && (
           <div className="result-wrap">
             <TicketFrame className="result-ticket">
               <div className="ticket-head"><span>ESTIMADO DE SERVICIO</span><ShieldCheck size={16}/></div>
-              <div className="ticket-row"><span>Inmueble</span><strong>{result.prop.label}</strong></div>
-              <div className="ticket-row"><span>Plaga</span><strong>{result.pest.label}</strong></div>
-              <div className="ticket-row"><span>Tamaño</span><strong>{result.size.label}</strong></div>
-              <div className="ticket-row"><span>Servicio</span><strong>{result.service.label}</strong></div>
+              <div className="ticket-row"><span>Inmueble</span><strong>{result.prop.tipo}</strong></div>
+              <div className="ticket-row"><span>Plaga</span><strong>{result.pest.nombre}</strong></div>
+              <div className="ticket-row"><span>Tamaño</span><strong>{result.size.rango_m2}</strong></div>
+              <div className="ticket-row"><span>Servicio</span><strong>{result.service.nombre}</strong></div>
               <div className="ticket-divider"/>
               <div className="ticket-row"><span>Subtotal</span><strong>{currency(result.subtotal)}</strong></div>
+              {result.descuento > 0 && <div className="ticket-row"><span>Descuento{result.promo ? ` (${result.promo.nombre})` : ""}</span><strong>-{currency(result.descuento)}</strong></div>}
               <div className="ticket-row"><span>IVA (16%)</span><strong>{currency(result.iva)}</strong></div>
               <div className="ticket-row"><span>Rango estimado</span><strong>{currency(result.low)} – {currency(result.high)}</strong></div>
               <div className="ticket-row ticket-total"><span>Total sugerido</span><strong>{currency(result.total)}</strong></div>
@@ -803,11 +755,12 @@ function CotizadorPage({ quote, setQuote, setPage, setToast }) {
    SOLICITUD
    ============================================================ */
 
-function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
-  const [form, setForm] = useState({ nombre:"", apellidoPaterno:"", apellidoMaterno:"", telefono:"", correo:"", confirmacionCorreo:"", calle:"", numero:"", colonia:"", codigoPostal:"", rfc:"", fecha:"", horario:"", notas:"" });
-  const [errors, setErrors]   = useState({});
+function SolicitudPage({ cat, quote, setPage, setToast }) {
+  const [form, setForm] = useState({ nombre:"", apellido_paterno:"", apellido_materno:"", telefono:"", correo:"", confirmacionCorreo:"", calle:"", numero:"", colonia:"", codigo_postal:"", rfc:"", fecha:"", horario:"", notas:"" });
+  const [errors, setErrors]       = useState({});
   const [confirmed, setConfirmed] = useState(null);
-  const [envio, setEnvio]       = useState("");   // "" | enviando | enviado | error | sin-configurar
+  const [envio, setEnvio]         = useState("");      // "" | enviado | pendiente
+  const [enviando, setEnviando]   = useState(false);
   const result = quote.result;
   if (!result) return <section className="section empty-state"><Info size={28}/><h2>Primero arma tu cotización</h2><p>Necesitamos saber qué servicio necesitas antes de tomar tus datos.</p><button className="btn btn-accent" onClick={()=>setPage("cotizador")}>Ir al cotizador</button></section>;
   const update = (k, v) => {
@@ -817,46 +770,49 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
   const hoy = todayStr();
   const validate = () => {
     const e = {};
-    if (!form.nombre.trim())          e.nombre          = "Ingresa tu nombre.";
-    if (!form.apellidoPaterno.trim()) e.apellidoPaterno  = "Ingresa apellido paterno.";
-    if (!form.apellidoMaterno.trim()) e.apellidoMaterno  = "Ingresa apellido materno.";
-    if (form.telefono.replace(/\D/g,"").length !== 10) e.telefono = "Ingresa un teléfono de 10 dígitos.";
-    if (!/^\S+@\S+\.\S+$/.test(form.correo.trim()))    e.correo   = "Correo inválido.";
+    if (!form.nombre.trim())           e.nombre           = "Ingresa tu nombre.";
+    if (!form.apellido_paterno.trim()) e.apellido_paterno = "Ingresa apellido paterno.";
+    if (!form.apellido_materno.trim()) e.apellido_materno = "Ingresa apellido materno.";
+    if (soloDigitos(form.telefono).length !== 10) e.telefono = "Ingresa un teléfono de 10 dígitos.";
+    if (!EMAIL_RE.test(form.correo.trim()))       e.correo   = "Correo inválido.";
     if (form.correo.trim().toLowerCase()!==form.confirmacionCorreo.trim().toLowerCase()) e.confirmacionCorreo="Los correos no coinciden.";
-    if (form.rfc.trim() && !/^[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}$/i.test(form.rfc.trim())) e.rfc = "RFC inválido.";
-    if (!form.calle.trim())       e.calle       = "Ingresa la calle.";
-    if (!form.numero.trim())      e.numero      = "Ingresa el número.";
-    if (!form.colonia.trim())     e.colonia     = "Ingresa la colonia.";
-    if (!/^\d{5}$/.test(form.codigoPostal.trim())) e.codigoPostal = "El código postal debe tener 5 dígitos.";
-    if (!form.fecha)              e.fecha       = "Selecciona una fecha.";
-    else if (form.fecha < hoy)    e.fecha       = "La fecha no puede ser anterior a hoy.";
-    if (!form.horario)            e.horario     = "Selecciona un horario.";
+    if (form.rfc.trim() && !RFC_RE.test(form.rfc.trim())) e.rfc = "RFC inválido.";
+    if (!form.calle.trim())       e.calle   = "Ingresa la calle.";
+    if (!form.numero.trim())      e.numero  = "Ingresa el número.";
+    if (!form.colonia.trim())     e.colonia = "Ingresa la colonia.";
+    if (!/^\d{5}$/.test(form.codigo_postal.trim())) e.codigo_postal = "El código postal debe tener 5 dígitos.";
+    if (!form.fecha)              e.fecha   = "Selecciona una fecha.";
+    else if (form.fecha < hoy)    e.fecha   = "La fecha no puede ser anterior a hoy.";
+    if (!form.horario)            e.horario = "Selecciona un horario.";
     setErrors(e); return Object.keys(e).length === 0;
   };
   const submit = async (ev) => {
-    ev.preventDefault(); if (!validate()) return;
-    const folio = nextFolio();
-    const nombreCompleto = `${form.nombre.trim()} ${form.apellidoPaterno.trim()} ${form.apellidoMaterno.trim()}`;
-    const record = { folio, clienteId:null, cliente:nombreCompleto, servicioId:result.service.id, inmueble:result.prop.label, tamano:result.size.label, fecha:form.fecha, horario:form.horario, estado:"Pendiente", subtotal:result.subtotal, iva:result.iva, total:result.total, tecnicoId:null, notas:form.notas.trim() };
-    const datosCliente = {
-      nombre:form.nombre.trim(), apellidoPaterno:form.apellidoPaterno.trim(), apellidoMaterno:form.apellidoMaterno.trim(),
-      telefono:form.telefono.trim(), correo:form.correo.trim(),
-      calle:form.calle.trim(), numero:form.numero.trim(), colonia:form.colonia.trim(), codigoPostal:form.codigoPostal.trim(),
-      rfc:form.rfc.trim().toUpperCase(),
-    };
-    addSolicitud(record, datosCliente);
-    const comprobante = {
-      ...record,
-      telefono:datosCliente.telefono, correo:datosCliente.correo,
-      servicio:result.service.label, plaga:result.pest.label,
-      direccionCompleta:`${datosCliente.calle} ${datosCliente.numero}, Col. ${datosCliente.colonia}, CP ${datosCliente.codigoPostal}`,
-    };
-    setConfirmed(comprobante);
-    setEnvio("enviando");
-    setToast("Solicitud registrada.");
-    const estado = await enviarFolioAEmpresa(comprobante);
-    setEnvio(estado);
-    setToast(estado === "enviado" ? "Folio enviado al correo de la empresa." : "Solicitud registrada. El correo no se pudo enviar automáticamente.");
+    ev.preventDefault();
+    if (enviando || !validate()) return;
+    setEnviando(true);
+    const s = quote.selections;
+    try {
+      const r = await api("/solicitudes", { method:"POST", body:{
+        cliente:    { nombre:form.nombre, apellido_paterno:form.apellido_paterno, apellido_materno:form.apellido_materno, telefono:form.telefono, correo:form.correo, rfc:form.rfc },
+        direccion:  { calle:form.calle, numero:form.numero, colonia:form.colonia, codigo_postal:form.codigo_postal },
+        cotizacion: { inmueble_id:s.propertyId, plaga_id:s.pestId, tamano_id:s.sizeId, servicio_id:s.serviceId },
+        fecha:form.fecha, horario:form.horario, notas:form.notas,
+      }});
+      const o = r.solicitud;   // el precio y el folio los define el servidor
+      setConfirmed({
+        folio:o.folio, cliente:o.cliente, telefono:fmtTel(o.telefono_cliente), correo:o.correo_cliente,
+        servicio:o.servicio, plaga:o.plaga, inmueble:o.inmueble, tamano:o.tamano, direccionCompleta:o.direccion,
+        fecha:o.fecha_servicio, horario:o.horario, notas:o.notas || "",
+        subtotal:o.subtotal, descuento:o.descuento, iva:o.iva, total:o.total,
+      });
+      setEnvio(r.correo_enviado ? "enviado" : "pendiente");
+      setToast(r.correo_enviado ? "Folio enviado al correo de la empresa." : "Solicitud registrada.");
+    } catch (err) {
+      if (err.campos && Object.keys(err.campos).length) setErrors(err.campos);
+      setToast(err.message);
+    } finally {
+      setEnviando(false);
+    }
   };
   const descargarPdf = () => {
     try { generarPdfComprobante(confirmed); setToast("Comprobante descargado."); }
@@ -867,24 +823,24 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
       <div className="confirm-head"><CircleCheck size={30}/><h1>Solicitud confirmada</h1><p>Guarda tu folio: te servirá para dar seguimiento al servicio.</p></div>
       <TicketFrame className="confirm-ticket">
         <div className="ticket-head"><span>COMPROBANTE DE SOLICITUD</span><ShieldCheck size={16}/></div>
-        <div className="ticket-folio notranslate" translate="no">{confirmed.folio}</div>
+        <div className="ticket-folio">{confirmed.folio}</div>
         <div className="ticket-row"><span>Cliente</span><strong>{confirmed.cliente}</strong></div>
-        <div className="ticket-row"><span>Servicio</span><strong>{result.service.label}</strong></div>
+        <div className="ticket-row"><span>Servicio</span><strong>{confirmed.servicio}</strong></div>
         <div className="ticket-row"><span>Inmueble</span><strong>{confirmed.inmueble} · {confirmed.tamano}</strong></div>
         <div className="ticket-row"><span>Dirección</span><strong>{confirmed.direccionCompleta}</strong></div>
         <div className="ticket-row"><span>Fecha</span><strong>{confirmed.fecha} · {confirmed.horario}</strong></div>
         <div className="ticket-divider"/>
         <div className="ticket-row"><span>Subtotal</span><strong>{currency(confirmed.subtotal)}</strong></div>
+        {confirmed.descuento > 0 && <div className="ticket-row"><span>Descuento</span><strong>-{currency(confirmed.descuento)}</strong></div>}
         <div className="ticket-row"><span>IVA (16%)</span><strong>{currency(confirmed.iva)}</strong></div>
         <div className="ticket-row ticket-total"><span>Total estimado</span><strong>{currency(confirmed.total)}</strong></div>
         <p className="ticket-note">Conserva este comprobante: el folio sirve para dar seguimiento a tu servicio.</p>
       </TicketFrame>
       <div className={`envio-status envio-${envio}`}>
-        {envio === "enviando" && <span>Enviando folio a la empresa…</span>}
-        {envio === "enviado"  && <span><CircleCheck size={15}/> Folio enviado al correo de la empresa.</span>}
-        {(envio === "error" || envio === "sin-configurar") && (
+        {envio === "enviado" && <span><CircleCheck size={15}/> Folio enviado al correo de la empresa.</span>}
+        {envio === "pendiente" && (
           <span>
-            <AlertTriangle size={15}/> {envio === "error" ? "No se pudo enviar el folio automáticamente." : "El envío automático aún no está configurado."}{" "}
+            <AlertTriangle size={15}/> Tu solicitud quedó registrada. El aviso por correo a la empresa está pendiente.{" "}
             <a href={mailtoFolio(confirmed)}>Enviarlo desde mi correo</a>
           </span>
         )}
@@ -906,8 +862,8 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
           <p className="form-section-title">Datos personales</p>
           <div className="form-row form-row-3">
             <Field {...fp} label="Nombre(s)" name="nombre" placeholder="Nombre(s)"/>
-            <Field {...fp} label="Apellido Paterno" name="apellidoPaterno" placeholder="Apellido paterno"/>
-            <Field {...fp} label="Apellido Materno" name="apellidoMaterno" placeholder="Apellido materno"/>
+            <Field {...fp} label="Apellido Paterno" name="apellido_paterno" placeholder="Apellido paterno"/>
+            <Field {...fp} label="Apellido Materno" name="apellido_materno" placeholder="Apellido materno"/>
           </div>
           <div className="form-row form-row-2">
             <Field {...fp} label="Teléfono" name="telefono" icon={Phone} placeholder="81 0000 0000" inputMode="tel"/>
@@ -924,26 +880,27 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
           </div>
           <div className="form-row form-row-2">
             <Field {...fp} label="Colonia" name="colonia" placeholder="Nombre de la colonia"/>
-            <Field {...fp} label="Código Postal" name="codigoPostal" placeholder="5 dígitos" inputMode="numeric" maxLength={5}/>
+            <Field {...fp} label="Código Postal" name="codigo_postal" placeholder="5 dígitos" inputMode="numeric" maxLength={5}/>
           </div>
           <p className="form-section-title">Fecha y horario</p>
           <div className="form-row form-row-2">
             <Field {...fp} label="Fecha" name="fecha" type="date" icon={Calendar} min={hoy}/>
-            <label>Horario<div className="input-wrap"><Clock size={16}/><select value={form.horario} onChange={(e)=>update("horario",e.target.value)}><option value="">Selecciona un horario</option>{HORARIOS.map((h)=><option key={h} value={h}>{h}</option>)}</select></div>{errors.horario&&<span className="field-error">{errors.horario}</span>}</label>
+            <label>Horario<div className="input-wrap"><Clock size={16}/><select value={form.horario} onChange={(e)=>update("horario",e.target.value)}><option value="">Selecciona un horario</option>{cat.horarios.map((h)=><option key={h} value={h}>{h}</option>)}</select></div>{errors.horario&&<span className="field-error">{errors.horario}</span>}</label>
           </div>
           <div className="form-row"><label>Notas para el técnico (opcional)<textarea rows={3} value={form.notas} onChange={(e)=>update("notas",e.target.value)} placeholder="Acceso, mascotas, horario preferente, etc."/></label></div>
-          <button className="btn btn-accent btn-lg" type="submit">Confirmar solicitud <ArrowRight size={18}/></button>
+          <button className="btn btn-accent btn-lg" type="submit" disabled={enviando}>{enviando ? "Enviando…" : <>Confirmar solicitud <ArrowRight size={18}/></>}</button>
         </form>
       </div>
       <div className="solicitud-summary-col">
         <TicketFrame className="summary-ticket">
           <div className="ticket-head"><span>RESUMEN DE COTIZACIÓN</span><ShieldCheck size={16}/></div>
-          <div className="ticket-row"><span>Servicio</span><strong>{result.service.label}</strong></div>
-          <div className="ticket-row"><span>Inmueble</span><strong>{result.prop.label}</strong></div>
-          <div className="ticket-row"><span>Plaga</span><strong>{result.pest.label}</strong></div>
-          <div className="ticket-row"><span>Tamaño</span><strong>{result.size.label}</strong></div>
+          <div className="ticket-row"><span>Servicio</span><strong>{result.service.nombre}</strong></div>
+          <div className="ticket-row"><span>Inmueble</span><strong>{result.prop.tipo}</strong></div>
+          <div className="ticket-row"><span>Plaga</span><strong>{result.pest.nombre}</strong></div>
+          <div className="ticket-row"><span>Tamaño</span><strong>{result.size.rango_m2}</strong></div>
           <div className="ticket-divider"/>
           <div className="ticket-row"><span>Subtotal</span><strong>{currency(result.subtotal)}</strong></div>
+          {result.descuento > 0 && <div className="ticket-row"><span>Descuento</span><strong>-{currency(result.descuento)}</strong></div>}
           <div className="ticket-row"><span>IVA (16%)</span><strong>{currency(result.iva)}</strong></div>
           <div className="ticket-row ticket-total"><span>Total estimado</span><strong>{currency(result.total)}</strong></div>
           <button className="btn btn-outline" style={{ width:"100%",marginTop:12 }} onClick={()=>setPage("cotizador")}>Editar cotización</button>
@@ -957,9 +914,9 @@ function SolicitudPage({ quote, setPage, addSolicitud, setToast }) {
    CATÁLOGO
    ============================================================ */
 
-function CatalogoPage({ setPage, setQuote }) {
-  const [open, setOpen] = useState(PESTS[0].id);
-  const startQuoteFor = (pest) => { setQuote((q)=>({ ...q, selections:{ ...q.selections, pestId:pest.id, serviceId:pest.servicio } })); setPage("cotizador"); };
+function CatalogoPage({ cat, setPage, setQuote }) {
+  const [open, setOpen] = useState(cat.plagas[0]?.id ?? null);
+  const startQuoteFor = (pest) => { setQuote((q)=>({ ...q, selections:{ ...q.selections, pestId:pest.id, serviceId:pest.servicio_id ?? q.selections.serviceId } })); setPage("cotizador"); };
   return (
     <section className="section catalog">
       <div className="section-head">
@@ -968,16 +925,16 @@ function CatalogoPage({ setPage, setQuote }) {
         <p>Identifica señales comunes de infestación y el tratamiento recomendado para cada caso.</p>
       </div>
       <div className="catalog-grid">
-        {PESTS.map((p) => {
-          const service = SERVICES.find((s)=>s.id===p.servicio); const isOpen = open===p.id;
+        {cat.plagas.map((p) => {
+          const service = cat.servicios.find((s)=>s.id===p.servicio_id); const isOpen = open===p.id;
           return (
             <div className={`pest-card ${isOpen?"is-open":""}`} key={p.id}>
               <button className="pest-card-head" onClick={()=>setOpen(isOpen?null:p.id)}>
-                <span className="pest-glyph pest-glyph-lg"><PestGlyph id={p.id} size={40}/></span>
-                <div><h3>{p.label}</h3><span className="pest-service-tag">Recomendado: {service.label}</span></div>
+                <span className="pest-glyph pest-glyph-lg"><PestGlyph id={glyphKey(p.nombre)} size={40}/></span>
+                <div><h3>{p.nombre}</h3>{service && <span className="pest-service-tag">Recomendado: {service.nombre}</span>}</div>
                 <ChevronRight className={`pest-chevron ${isOpen?"is-rot":""}`} size={18}/>
               </button>
-              {isOpen && <div className="pest-card-body"><span className="pest-body-label">Señales frecuentes</span><ul>{p.signos.map((s,i)=><li key={i}><CircleDot size={12}/> {s}</li>)}</ul><button className="btn btn-primary" onClick={()=>startQuoteFor(p)}>Cotizar para {p.label.toLowerCase()} <ArrowRight size={15}/></button></div>}
+              {isOpen && <div className="pest-card-body"><span className="pest-body-label">Señales frecuentes</span><ul>{p.signos.map((s,i)=><li key={i}><CircleDot size={12}/> {s}</li>)}</ul><button className="btn btn-primary" onClick={()=>startQuoteFor(p)}>Cotizar para {p.nombre.toLowerCase()} <ArrowRight size={15}/></button></div>}
             </div>
           );
         })}
@@ -987,110 +944,111 @@ function CatalogoPage({ setPage, setQuote }) {
 }
 
 /* ============================================================
-   PANEL ADMINISTRATIVO
+   PANEL ADMINISTRATIVO (datos reales desde MySQL)
    ============================================================ */
 
-function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnicos, proveedores, setProveedores, materiaPrima, setMateriaPrima, setToast, usuario }) {
+const FUENTES = {
+  solicitudes:"/solicitudes", clientes:"/clientes", tecnicos:"/tecnicos", proveedores:"/proveedores",
+  materiaPrima:"/materia-prima", compras:"/compras", stats:"/estadisticas",
+};
+
+function AdminPage({ cat, usuario, setToast, onSesionExpirada }) {
   const [tab, setTab]             = useState("solicitudes");
-  const [filterEstado, setFilter] = useState("Todos");
+  const [filterEstado, setFilter] = useState("");
   const [search, setSearch]       = useState("");
-  const [modal, setModal]         = useState(null); // { tipo }
+  const [modal, setModal]         = useState(null);
+  const [cargando, setCargando]   = useState(true);
+  const [data, setData]           = useState({ solicitudes:[], clientes:[], tecnicos:[], proveedores:[], materiaPrima:[], compras:[], stats:null });
   const esAdmin = usuario?.rol === "Administrador";
+  const { solicitudes, clientes, tecnicos, proveedores, materiaPrima, compras, stats } = data;
+
+  const manejarError = useCallback((err) => {
+    if (err.status === 401) onSesionExpirada(); else setToast(err.message);
+  }, [onSesionExpirada, setToast]);
+
+  /* Vuelve a pedir a la base de datos las listas indicadas (o todas) */
+  const refrescar = useCallback(async (...claves) => {
+    const lista = claves.length ? claves : Object.keys(FUENTES);
+    try {
+      const res = await Promise.all(lista.map((k) => api(FUENTES[k])));
+      setData((d) => { const n = { ...d }; lista.forEach((k, i) => { n[k] = res[i]; }); return n; });
+    } catch (err) { manejarError(err); }
+  }, [manejarError]);
+
+  useEffect(() => { refrescar().finally(() => setCargando(false)); }, [refrescar]);
+
+  const ejecutar = async (fn) => { try { return await fn(); } catch (err) { manejarError(err); } };
 
   /* ─ Solicitudes ─ */
-  const updateEstado = (folio, estado) => {
-    const s = solicitudes.find((x)=>x.folio===folio);
-    if (!s) return;
-    if (ESTADOS_REQUIEREN_TECNICO.includes(estado) && !s.tecnicoId) {
-      setToast("Asigna un técnico antes de cambiar a este estado."); return;
-    }
-    setSolicitudes((l)=>l.map((x)=>x.folio===folio?{...x,estado}:x));
-    setToast(`Solicitud ${folio} → "${estado}".`);
-  };
-  const asignarTecnico = (folio, tecnicoId) => {
-    const s = solicitudes.find((x)=>x.folio===folio);
-    if (!s) return;
-    // Quitar el técnico a una solicitud que ya lo requiere dejaría un estado incoherente
-    if (!tecnicoId && ESTADOS_REQUIEREN_TECNICO.includes(s.estado)) {
-      setToast("Primero regresa la solicitud a \"Pendiente\" para quitar al técnico."); return;
-    }
-    setSolicitudes((l)=>l.map((x)=>x.folio===folio?{...x,tecnicoId}:x));
-    const t = tecnicos.find((t)=>t.id===tecnicoId);
-    setToast(t ? `Técnico ${t.nombre} ${t.apellidoPaterno} asignado.` : `Técnico removido de ${folio}.`);
-  };
-  const filtered = solicitudes.filter((s)=>{
-    const matchE = filterEstado==="Todos"||s.estado===filterEstado;
-    const matchS = (s.cliente+s.folio).toLowerCase().includes(search.toLowerCase());
-    return matchE&&matchS;
+  const cambiarEstado = (o, estadoId) => ejecutar(async () => {
+    const r = await api(`/solicitudes/${o.orden_id}/estado`, { method:"PATCH", body:{ estado_id:Number(estadoId) } });
+    setToast([`Solicitud ${o.folio} → "${r.solicitud.estado}".`, ...(r.avisos || [])].join(" "));
+    await refrescar("solicitudes", "stats", "materiaPrima", "tecnicos");
+  });
+  const asignarTecnico = (o, tecnicoId) => ejecutar(async () => {
+    const r = await api(`/solicitudes/${o.orden_id}/tecnico`, { method:"PATCH", body:{ tecnico_id: tecnicoId ? Number(tecnicoId) : null } });
+    setToast(r.solicitud.tecnico ? `Técnico ${r.solicitud.tecnico} asignado.` : `Técnico removido de ${o.folio}.`);
+    await refrescar("solicitudes", "tecnicos");
+  });
+  const filtered = solicitudes.filter((s) => {
+    const matchE = !filterEstado || String(s.estado_id) === filterEstado;
+    const matchS = (s.cliente + s.folio).toLowerCase().includes(search.toLowerCase());
+    return matchE && matchS;
   });
 
-  /* ─ Estadísticas ─ */
-  const completados = solicitudes.filter((s)=>s.estado==="Completado");
-  const ingresos = completados.reduce((a,s)=>a+s.total,0);
-  const stats = { total:solicitudes.length, pendientes:solicitudes.filter((s)=>s.estado==="Pendiente").length, ingresos, promedio:completados.length?Math.round(ingresos/completados.length):0 };
-  const porServicio = SERVICES.map((sv)=>({ name:sv.code, label:sv.label, cantidad:solicitudes.filter((s)=>s.servicioId===sv.id).length }));
-  const chartMeses = useMemo(() => {
-    const hoy = new Date();
-    return Array.from({ length:6 }, (_, i) => {
-      const d = new Date(hoy.getFullYear(), hoy.getMonth() - (5 - i), 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
-      return { mes:MESES_CORTOS[d.getMonth()], servicios:solicitudes.filter((s)=>s.fecha.startsWith(key) && s.estado!=="Cancelado").length };
-    });
-  }, [solicitudes]);
-
-  /* ─ CRUD Técnicos ─ */
-  const addTecnico = (datos) => {
-    setTecnicos((l)=>[...l, { id:nextTecId(), ...datos }]);
-    setModal(null); setToast("Técnico agregado correctamente.");
+  /* ─ Técnicos ─ */
+  const addTecnico = async (datos) => {
+    await api("/tecnicos", { method:"POST", body:datos });
+    setModal(null); setToast("Técnico agregado correctamente."); await refrescar("tecnicos");
   };
-  const delTecnico = (id) => {
-    setSolicitudes((l)=>l.map((s)=>s.tecnicoId===id?{...s,tecnicoId:null,estado:ESTADOS_REQUIEREN_TECNICO.includes(s.estado)&&s.estado!=="Completado"?"Pendiente":s.estado}:s));
-    setTecnicos((l)=>l.filter((t)=>t.id!==id));
+  const delTecnico = (id) => ejecutar(async () => {
+    await api(`/tecnicos/${id}`, { method:"DELETE" });
     setToast("Técnico eliminado. Sus solicitudes activas regresaron a \"Pendiente\".");
-  };
-
-  /* ─ CRUD Proveedores ─ */
-  const addProveedor = (datos) => {
-    setProveedores((l)=>[...l, { id:nextPrId(), ...datos }]);
-    setModal(null); setToast("Proveedor agregado correctamente.");
-  };
-  const delProveedor = (id) => {
-    if (materiaPrima.some((m)=>m.proveedorId===id)) {
-      setToast("No puedes eliminar un proveedor con insumos asociados."); return;
-    }
-    setProveedores((l)=>l.filter((p)=>p.id!==id));
-    setToast("Proveedor eliminado.");
-  };
-
-  /* ─ CRUD Materia Prima ─ */
-  const addMateriaPrima = (datos) => {
-    setMateriaPrima((l)=>[...l, { id:nextMpId(), ...datos, nombre:datos.nombre.trim(), cantidad:Number(datos.cantidad), minimo:Number(datos.minimo)||0, precioMateriaPrima:Number(datos.precioMateriaPrima) }]);
-    setModal(null); setToast("Insumo agregado correctamente.");
-  };
-  const delMateriaPrima = (id) => { setMateriaPrima((l)=>l.filter((m)=>m.id!==id)); setToast("Insumo eliminado."); };
-
-  /* ─ Vaciar listas completas (para empezar pruebas desde cero) ─ */
-  const vaciarTecnicos = () => {
-    setSolicitudes((l)=>l.map((s)=>s.tecnicoId
-      ? { ...s, tecnicoId:null, estado:(ESTADOS_REQUIEREN_TECNICO.includes(s.estado) && s.estado!=="Completado") ? "Pendiente" : s.estado }
-      : s));
-    setTecnicos([]);
-    tecnicoCounter = 0;                       // el siguiente técnico será T-01
+    await refrescar("tecnicos", "solicitudes", "stats");
+  });
+  const vaciarTecnicos = () => ejecutar(async () => {
+    await api("/tecnicos", { method:"DELETE" });
     setToast("Técnicos vaciados. Las solicitudes activas regresaron a \"Pendiente\".");
+    await refrescar("tecnicos", "solicitudes", "stats");
+  });
+
+  /* ─ Proveedores ─ */
+  const addProveedor = async (datos) => {
+    await api("/proveedores", { method:"POST", body:datos });
+    setModal(null); setToast("Proveedor agregado correctamente."); await refrescar("proveedores");
   };
-  const vaciarProveedores = () => {
-    setMateriaPrima((l)=>l.map((m)=>({ ...m, proveedorId:"" })));   // los insumos quedan "sin proveedor"
-    setProveedores([]);
-    proveedorCounter = 0;                     // el siguiente proveedor será PR-01
+  const delProveedor = (id) => ejecutar(async () => {
+    await api(`/proveedores/${id}`, { method:"DELETE" });
+    setToast("Proveedor eliminado."); await refrescar("proveedores");
+  });
+  const vaciarProveedores = () => ejecutar(async () => {
+    await api("/proveedores", { method:"DELETE" });
     setToast("Proveedores vaciados. Los insumos quedaron sin proveedor asignado.");
+    await refrescar("proveedores", "materiaPrima", "compras");
+  });
+
+  /* ─ Materia prima ─ */
+  const addMateriaPrima = async (datos) => {
+    await api("/materia-prima", { method:"POST", body:datos });
+    setModal(null); setToast("Insumo agregado correctamente."); await refrescar("materiaPrima", "stats");
   };
-  const vaciarMateriaPrima = () => {
-    setMateriaPrima([]);
-    mpCounter = 0;                            // el siguiente insumo será MP-01
-    setToast("Inventario de materia prima vaciado.");
+  const delMateriaPrima = (id) => ejecutar(async () => {
+    await api(`/materia-prima/${id}`, { method:"DELETE" });
+    setToast("Insumo eliminado."); await refrescar("materiaPrima", "stats", "compras");
+  });
+  const vaciarMateriaPrima = () => ejecutar(async () => {
+    await api("/materia-prima", { method:"DELETE" });
+    setToast("Inventario de materia prima vaciado."); await refrescar("materiaPrima", "stats", "compras");
+  });
+
+  /* ─ Compras ─ */
+  const addCompra = async (datos) => {
+    const r = await api("/compras", { method:"POST", body:datos });
+    setModal(null); setToast(`Compra registrada por ${mxn(r.total)}. El inventario se actualizó.`);
+    await refrescar("compras", "materiaPrima", "stats");
   };
 
-  const valorInventario = materiaPrima.reduce((a,m)=>a+m.cantidad*m.precioMateriaPrima,0);
+  const valorInventario = materiaPrima.reduce((a, m) => a + m.cantidad * m.precio_unitario, 0);
 
   const tabs = [
     { id:"solicitudes",  label:"Solicitudes",   icon:ClipboardList },
@@ -1098,9 +1056,11 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
     { id:"tecnicos",     label:"Técnicos",       icon:User          },
     { id:"proveedores",  label:"Proveedores",    icon:Truck         },
     { id:"inventario",   label:"Materia Prima",  icon:Package       },
+    { id:"compras",      label:"Compras",        icon:FileText      },
     { id:"historial",    label:"Historial",      icon:History       },
     { id:"estadisticas", label:"Estadísticas",   icon:BarChart3     },
   ];
+  const cerradas = solicitudes.filter((s) => ESTADOS_CERRADOS.includes(s.estado_id));
 
   return (
     <section className="admin">
@@ -1117,35 +1077,36 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
         </div>
       </div>
 
+      {cargando && <p className="dim" style={{ padding:"20px 0" }}>Cargando datos…</p>}
+
       {/* ── SOLICITUDES ── */}
       {tab==="solicitudes" && (
         <div className="admin-panel">
           <div className="admin-toolbar">
             <div className="input-wrap input-wrap-search"><Search size={15}/><input placeholder="Buscar por folio o cliente" value={search} onChange={(e)=>setSearch(e.target.value)}/></div>
-            <select value={filterEstado} onChange={(e)=>setFilter(e.target.value)}><option>Todos</option>{ESTADOS.map((e)=><option key={e}>{e}</option>)}</select>
+            <select value={filterEstado} onChange={(e)=>setFilter(e.target.value)}><option value="">Todos</option>{cat.estados.map((e)=><option key={e.id} value={e.id}>{e.nombre}</option>)}</select>
           </div>
           <div className="table-wrap">
             <table className="table">
               <thead><tr><th>Folio</th><th>Cliente</th><th>Servicio</th><th>Inmueble</th><th>Tamaño</th><th>Subtotal</th><th>IVA</th><th>Total</th><th>Fecha</th><th>Técnico</th><th>Estado</th></tr></thead>
               <tbody>
                 {filtered.map((s)=>{
-                  const sv = SERVICES.find((x)=>x.id===s.servicioId);
-                  const cerrada = ESTADOS_CERRADOS.includes(s.estado);
+                  const cerrada = ESTADOS_CERRADOS.includes(s.estado_id);
                   return (
-                    <tr key={s.folio}>
-                      <td className="mono">{s.folio}</td><td>{s.cliente}</td><td>{sv?.label}</td>
+                    <tr key={s.orden_id}>
+                      <td className="mono">{s.folio}</td><td>{s.cliente}</td><td>{s.servicio}</td>
                       <td>{s.inmueble}</td><td>{s.tamano}</td>
-                      <td className="mono">{currency(s.subtotal??0)}</td><td className="mono">{currency(s.iva??0)}</td><td className="mono">{currency(s.total)}</td>
-                      <td>{s.fecha} <span className="dim">· {s.horario}</span></td>
+                      <td className="mono">{currency(s.subtotal)}</td><td className="mono">{currency(s.iva)}</td><td className="mono">{currency(s.total)}</td>
+                      <td>{s.fecha_servicio} <span className="dim">· {s.horario}</span></td>
                       <td>
-                        <select className="estado-select" value={s.tecnicoId??""} disabled={cerrada} onChange={(e)=>asignarTecnico(s.folio,e.target.value||null)} style={{ background:s.tecnicoId?"#EAF7EA":cerrada?"#ECEFF1":"#FFF4E0", color:s.tecnicoId?"#1E5E24":cerrada?"#45605C":"#8A5A00", opacity:cerrada?0.7:1 }}>
+                        <select className="estado-select" value={s.tecnico_id ?? ""} disabled={cerrada} onChange={(e)=>asignarTecnico(s, e.target.value)} style={{ background:s.tecnico_id?"#EAF7EA":cerrada?"#ECEFF1":"#FFF4E0", color:s.tecnico_id?"#1E5E24":cerrada?"#45605C":"#8A5A00", opacity:cerrada?0.7:1 }}>
                           <option value="">Sin asignar</option>
-                          {tecnicos.map((t)=><option key={t.id} value={t.id}>{t.nombre} {t.apellidoPaterno}</option>)}
+                          {tecnicos.map((t)=><option key={t.id} value={t.id}>{t.nombre} {t.apellido_paterno}</option>)}
                         </select>
                       </td>
                       <td>
-                        <select className="estado-select" value={s.estado} disabled={cerrada} onChange={(e)=>updateEstado(s.folio,e.target.value)} style={{ background:ESTADO_STYLE[s.estado].bg, color:ESTADO_STYLE[s.estado].fg, opacity:cerrada?0.85:1 }}>
-                          {ESTADOS.map((e)=><option key={e}>{e}</option>)}
+                        <select className="estado-select" value={s.estado_id} disabled={cerrada} onChange={(e)=>cambiarEstado(s, e.target.value)} style={{ background:ESTADO_STYLE[s.estado].bg, color:ESTADO_STYLE[s.estado].fg, opacity:cerrada?0.85:1 }}>
+                          {cat.estados.map((e)=><option key={e.id} value={e.id}>{e.nombre}</option>)}
                         </select>
                       </td>
                     </tr>
@@ -1166,7 +1127,7 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
               <thead><tr><th>ID</th><th>Nombre</th><th>Ap. Paterno</th><th>Ap. Materno</th><th>Teléfono</th><th>Correo</th><th>Calle</th><th>Núm.</th><th>Colonia</th><th>C.P.</th><th>RFC</th><th>Servicios</th></tr></thead>
               <tbody>
                 {clientes.map((c)=>(
-                  <tr key={c.id}><td className="mono">{c.id}</td><td>{c.nombre}</td><td>{c.apellidoPaterno}</td><td>{c.apellidoMaterno}</td><td>{c.telefono}</td><td>{c.correo}</td><td>{c.calle}</td><td>{c.numero}</td><td>{c.colonia}</td><td>{c.codigoPostal}</td><td className="mono">{c.rfc||"—"}</td><td><strong>{solicitudes.filter((s)=>s.clienteId===c.id).length}</strong></td></tr>
+                  <tr key={c.id}><td className="mono">C-{c.id}</td><td>{c.nombre}</td><td>{c.apellido_paterno}</td><td>{c.apellido_materno}</td><td>{fmtTel(c.telefono)}</td><td>{c.correo}</td><td>{c.calle}</td><td>{c.numero}</td><td>{c.colonia}</td><td>{c.codigo_postal}</td><td className="mono">{c.rfc||"—"}</td><td><strong>{c.servicios}</strong></td></tr>
                 ))}
                 {clientes.length===0 && <tr><td colSpan={12} className="table-empty">No hay clientes registrados.</td></tr>}
               </tbody>
@@ -1186,18 +1147,15 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
             <table className="table">
               <thead><tr><th>ID</th><th>Nombre</th><th>Ap. Paterno</th><th>Ap. Materno</th><th>Teléfono</th><th>Correo</th><th>RFC</th><th>NSS</th><th>Zona / Sucursal</th><th>Contacto de emergencia</th><th>Especialidad</th><th>Asignaciones activas</th><th></th></tr></thead>
               <tbody>
-                {tecnicos.map((t)=>{
-                  const asig = solicitudes.filter((s)=>s.tecnicoId===t.id && !ESTADOS_CERRADOS.includes(s.estado)).length;
-                  return (
-                    <tr key={t.id}>
-                      <td className="mono">{t.id}</td><td>{t.nombre}</td><td>{t.apellidoPaterno}</td><td>{t.apellidoMaterno}</td>
-                      <td>{t.telefono}</td><td>{t.correo}</td><td className="mono">{t.rfc}</td><td className="mono">{t.nss}</td><td>{t.sucursal}</td>
-                      <td>{t.contactoEmergenciaNombre}<br/><span className="mono" style={{fontSize:12}}>{t.contactoEmergenciaTelefono}</span></td><td>{t.especialidad}</td>
-                      <td><strong>{asig}</strong></td>
-                      <td>{esAdmin && <DeleteBtn onDelete={()=>delTecnico(t.id)} label="técnico"/>}</td>
-                    </tr>
-                  );
-                })}
+                {tecnicos.map((t)=>(
+                  <tr key={t.id}>
+                    <td className="mono">T-{String(t.id).padStart(2,"0")}</td><td>{t.nombre}</td><td>{t.apellido_paterno}</td><td>{t.apellido_materno}</td>
+                    <td>{fmtTel(t.telefono)}</td><td>{t.correo}</td><td className="mono">{t.rfc}</td><td className="mono">{t.nss}</td><td>{t.zona}</td>
+                    <td>{t.contacto_emergencia_nombre}<br/><span className="mono" style={{fontSize:12}}>{fmtTel(t.contacto_emergencia_telefono)}</span></td><td>{t.especialidad}</td>
+                    <td><strong>{t.asignaciones_activas}</strong></td>
+                    <td>{esAdmin && <DeleteBtn onDelete={()=>delTecnico(t.id)} label="técnico"/>}</td>
+                  </tr>
+                ))}
                 {tecnicos.length===0&&<tr><td colSpan={13} className="table-empty">No hay técnicos registrados.</td></tr>}
               </tbody>
             </table>
@@ -1218,8 +1176,8 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
               <tbody>
                 {proveedores.map((p)=>(
                   <tr key={p.id}>
-                    <td className="mono">{p.id}</td><td>{p.nombre}</td><td>{p.telefono}</td><td>{p.correo}</td>
-                    <td className="mono">{p.rfc}</td><td>{p.categoriaProveedor}</td><td>{p.direccion}</td>
+                    <td className="mono">PR-{String(p.id).padStart(2,"0")}</td><td>{p.nombre}</td><td>{fmtTel(p.telefono)}</td><td>{p.correo}</td>
+                    <td className="mono">{p.rfc}</td><td>{p.categoria_proveedor}</td><td>{p.direccion}</td>
                     <td>{esAdmin && <DeleteBtn onDelete={()=>delProveedor(p.id)} label="proveedor"/>}</td>
                   </tr>
                 ))}
@@ -1243,18 +1201,17 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
               <thead><tr><th>ID</th><th>Nombre</th><th>Descripción</th><th>Existencia</th><th>Precio por unidad</th><th>Valor en stock</th><th>Proveedor</th><th></th></tr></thead>
               <tbody>
                 {materiaPrima.map((m)=>{
-                  const prov = proveedores.find((p)=>p.id===m.proveedorId);
-                  const bajo = m.cantidad <= m.minimo;
+                  const bajo = !!m.bajo_stock;
                   return (
                     <tr key={m.id}>
-                      <td className="mono">{m.id}</td><td><strong>{m.nombre}</strong></td><td>{m.descripcion}</td>
+                      <td className="mono">MP-{String(m.id).padStart(2,"0")}</td><td><strong>{m.nombre}</strong></td><td>{m.descripcion}</td>
                       <td>
                         <span style={{ color:bajo?"#C1473F":"#1E5E24", fontWeight:600 }}>{m.cantidad} {m.unidad}</span>
-                        {bajo && <span className="dim" style={{ display:"block", color:"#C1473F" }}>⚠ Bajo stock (mín. {m.minimo} {m.unidad})</span>}
+                        {bajo && <span className="dim" style={{ display:"block", color:"#C1473F" }}>⚠ Bajo stock (mín. {m.stock_minimo} {m.unidad})</span>}
                       </td>
-                      <td className="mono">{mxn(m.precioMateriaPrima)} / {m.unidad}</td>
-                      <td className="mono">{mxn(m.cantidad*m.precioMateriaPrima)}</td>
-                      <td>{prov?.nombre??"—"}</td>
+                      <td className="mono">{mxn(m.precio_unitario)} / {m.unidad}</td>
+                      <td className="mono">{mxn(m.cantidad*m.precio_unitario)}</td>
+                      <td>{m.proveedor ?? "—"}</td>
                       <td>{esAdmin && <DeleteBtn onDelete={()=>delMateriaPrima(m.id)} label="insumo"/>}</td>
                     </tr>
                   );
@@ -1266,27 +1223,49 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
         </div>
       )}
 
+      {/* ── COMPRAS ── */}
+      {tab==="compras" && (
+        <div className="admin-panel">
+          <div className="admin-toolbar">
+            <button className="btn btn-primary" onClick={()=>setModal({tipo:"compra"})}><Plus size={15}/> Registrar compra</button>
+            <span className="dim" style={{ marginLeft:"auto" }}>Cada compra suma sus cantidades al inventario.</span>
+          </div>
+          <div className="table-wrap">
+            <table className="table">
+              <thead><tr><th>ID</th><th>Fecha</th><th>Proveedor</th><th>Productos</th><th>Subtotal</th><th>IVA</th><th>Total</th></tr></thead>
+              <tbody>
+                {compras.map((c)=>(
+                  <tr key={c.id}>
+                    <td className="mono">CP-{String(c.id).padStart(3,"0")}</td><td>{c.fecha_compra}</td><td>{c.proveedor ?? "—"}</td>
+                    <td>{c.detalle.map((d,i)=><div key={i}>{d.insumo} <span className="dim">× {d.cantidad} {d.unidad} a {mxn(d.costo_unitario)}</span></div>)}</td>
+                    <td className="mono">{mxn(c.subtotal)}</td><td className="mono">{mxn(c.iva)}</td><td className="mono">{mxn(c.total)}</td>
+                  </tr>
+                ))}
+                {compras.length===0&&<tr><td colSpan={7} className="table-empty">Aún no hay compras registradas.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* ── HISTORIAL ── */}
       {tab==="historial" && (
         <div className="admin-panel">
           <div className="history-list">
-            {solicitudes.filter((s)=>ESTADOS_CERRADOS.includes(s.estado)).map((s)=>{
-              const sv = SERVICES.find((x)=>x.id===s.servicioId);
-              return (
-                <div className="history-item" key={s.folio}>
-                  <Badge estado={s.estado}/>
-                  <div className="history-body"><strong>{sv?.label} · {s.cliente}</strong><span className="dim">{s.folio} — {s.fecha} · {s.horario} — {s.inmueble} {s.tamano}</span></div>
-                  <span className="mono" style={{ textDecoration:s.estado==="Cancelado"?"line-through":"none", opacity:s.estado==="Cancelado"?0.55:1 }}>{currency(s.total)}</span>
-                </div>
-              );
-            })}
-            {solicitudes.filter((s)=>ESTADOS_CERRADOS.includes(s.estado)).length===0 && <p className="table-empty">Aún no hay servicios completados o cancelados.</p>}
+            {cerradas.map((s)=>(
+              <div className="history-item" key={s.orden_id}>
+                <Badge estado={s.estado}/>
+                <div className="history-body"><strong>{s.servicio} · {s.cliente}</strong><span className="dim">{s.folio} — {s.fecha_servicio} · {s.horario} — {s.inmueble} {s.tamano}</span></div>
+                <span className="mono" style={{ textDecoration:s.estado==="Cancelado"?"line-through":"none", opacity:s.estado==="Cancelado"?0.55:1 }}>{currency(s.total)}</span>
+              </div>
+            ))}
+            {cerradas.length===0 && <p className="table-empty">Aún no hay servicios completados o cancelados.</p>}
           </div>
         </div>
       )}
 
       {/* ── ESTADÍSTICAS ── */}
-      {tab==="estadisticas" && (
+      {tab==="estadisticas" && stats && (
         <div className="admin-panel stats-panel">
           <div className="stat-cards">
             <div className="stat-card"><span>Solicitudes totales</span><strong>{stats.total}</strong></div>
@@ -1297,21 +1276,21 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
           <div className="chart-block">
             <div className="chart-head"><h3>Servicios agendados por mes</h3><span className="dim">Últimos 6 meses · sin canceladas</span></div>
             <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={chartMeses} margin={{ top:8,right:8,left:-18,bottom:0 }}>
+              <BarChart data={stats.por_mes} margin={{ top:8,right:8,left:-18,bottom:0 }}>
                 <CartesianGrid vertical={false} stroke="#D7E0DE"/>
                 <XAxis dataKey="mes" tick={{ fill:"#45605C",fontSize:12 }} axisLine={{ stroke:"#D7E0DE" }} tickLine={false}/>
                 <YAxis allowDecimals={false} tick={{ fill:"#45605C",fontSize:12 }} axisLine={false} tickLine={false}/>
                 <Tooltip cursor={{ fill:"#ECEFF1" }} contentStyle={{ borderRadius:8,border:"1px solid #D7E0DE",fontSize:13 }}/>
-                <Bar dataKey="servicios" radius={[4,4,0,0]}>{chartMeses.map((_,i)=><Cell key={i} fill={i===chartMeses.length-1?"#1976D2":"#4DB6AC"}/>)}</Bar>
+                <Bar dataKey="servicios" radius={[4,4,0,0]}>{stats.por_mes.map((_,i)=><Cell key={i} fill={i===stats.por_mes.length-1?"#1976D2":"#4DB6AC"}/>)}</Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="chart-block">
             <div className="chart-head"><h3>Solicitudes por tipo de servicio</h3><span className="dim">Acumulado del sistema</span></div>
             <div className="service-bars">
-              {porServicio.map((s)=>(
-                <div className="service-bar-row" key={s.name}>
-                  <span className="service-bar-label">{s.label}</span>
+              {stats.por_servicio.map((s)=>(
+                <div className="service-bar-row" key={s.id}>
+                  <span className="service-bar-label">{s.servicio}</span>
                   <div className="service-bar-track"><div className="service-bar-fill" style={{ width:`${(s.cantidad/Math.max(1,stats.total))*100}%` }}/></div>
                   <span className="service-bar-count">{s.cantidad}</span>
                 </div>
@@ -1321,43 +1300,65 @@ function AdminPage({ solicitudes, setSolicitudes, clientes, tecnicos, setTecnico
         </div>
       )}
 
-      {/* ══ MODALES CRUD ══ */}
-      {modal?.tipo==="tecnico"      && <ModalTecnico      onSave={addTecnico}      onClose={()=>setModal(null)}/>}
-      {modal?.tipo==="proveedor"    && <ModalProveedor    onSave={addProveedor}    onClose={()=>setModal(null)}/>}
+      {/* ══ MODALES ══ */}
+      {modal?.tipo==="tecnico"      && <ModalTecnico      onSave={addTecnico}      onClose={()=>setModal(null)} servicios={cat.servicios}/>}
+      {modal?.tipo==="proveedor"    && <ModalProveedor    onSave={addProveedor}    onClose={()=>setModal(null)} categorias={cat.categorias_proveedor}/>}
       {modal?.tipo==="materiaPrima" && <ModalMateriaPrima onSave={addMateriaPrima} onClose={()=>setModal(null)} proveedores={proveedores}/>}
+      {modal?.tipo==="compra"       && <ModalCompra       onSave={addCompra}       onClose={()=>setModal(null)} proveedores={proveedores} materiaPrima={materiaPrima}/>}
     </section>
   );
 }
 
 /* ──────────────────────────────────────────────
-   MODALES DE ALTA
+   MODALES DE ALTA (envían los datos a la API)
 ────────────────────────────────────────────── */
 
-function ModalTecnico({ onSave, onClose }) {
-  const [f, setF] = useState({ nombre:"", apellidoPaterno:"", apellidoMaterno:"", telefono:"", confirmacionTelefono:"", correo:"", confirmacionCorreo:"", rfc:"", nss:"", sucursal:"", especialidad:"", contactoEmergenciaNombre:"", contactoEmergenciaTelefono:"" });
+/* Estado de un formulario modal: campos, errores por campo y estado de guardado */
+function useFormModal(initial) {
+  const [f, setF] = useState(initial);
   const [errors, setErrors] = useState({});
-  const up = (k,v) => { setF((x)=>({...x,[k]:v})); setErrors((e)=>(e[k]?{...e,[k]:undefined}:e)); };
+  const [guardando, setGuardando] = useState(false);
+  const up = (k, v) => {
+    setF((x) => ({ ...x, [k]:v }));
+    setErrors((e) => ((e[k] || e._form) ? { ...e, [k]:undefined, _form:undefined } : e));
+  };
+  /* Ejecuta el guardado; si el servidor rechaza los datos, muestra sus mensajes en el formulario */
+  const guardar = async (accion) => {
+    if (guardando) return;
+    setGuardando(true);
+    try { await accion(); }
+    catch (err) { setErrors({ ...(err.campos || {}), _form:err.message }); setGuardando(false); }
+  };
+  return { f, up, errors, setErrors, guardando, guardar };
+}
+
+function ModalTecnico({ onSave, onClose, servicios }) {
+  const { f, up, errors, setErrors, guardando, guardar } = useFormModal({ nombre:"", apellido_paterno:"", apellido_materno:"", telefono:"", confirmacionTelefono:"", correo:"", confirmacionCorreo:"", rfc:"", nss:"", zona:"", servicio_id:"", contacto_emergencia_nombre:"", contacto_emergencia_telefono:"" });
   const validate = () => {
     const e = {};
-    if (!f.nombre.trim())          e.nombre = "Ingresa el nombre.";
-    if (!f.apellidoPaterno.trim()) e.apellidoPaterno = "Ingresa el apellido paterno.";
+    if (!f.nombre.trim())           e.nombre = "Ingresa el nombre.";
+    if (!f.apellido_paterno.trim()) e.apellido_paterno = "Ingresa el apellido paterno.";
     if (soloDigitos(f.telefono).length !== 10) e.telefono = "Ingresa un teléfono de 10 dígitos.";
     if (soloDigitos(f.confirmacionTelefono) !== soloDigitos(f.telefono) || !f.confirmacionTelefono.trim()) e.confirmacionTelefono = "Los teléfonos no coinciden.";
     if (!EMAIL_RE.test(f.correo.trim())) e.correo = "Correo inválido.";
     if (f.correo.trim().toLowerCase() !== f.confirmacionCorreo.trim().toLowerCase() || !f.confirmacionCorreo.trim()) e.confirmacionCorreo = "Los correos no coinciden.";
     if (!/^[A-ZÑ&]{4}\d{6}[A-Z0-9]{3}$/i.test(f.rfc.trim())) e.rfc = "RFC inválido (persona física, 13 caracteres).";
     if (soloDigitos(f.nss).length !== 11) e.nss = "El NSS debe tener 11 dígitos.";
-    if (!f.sucursal)      e.sucursal = "Selecciona la zona o sucursal.";
-    if (!f.especialidad)  e.especialidad = "Selecciona una especialidad.";
-    if (!f.contactoEmergenciaNombre.trim()) e.contactoEmergenciaNombre = "Ingresa el nombre del contacto de emergencia.";
-    if (soloDigitos(f.contactoEmergenciaTelefono).length !== 10) e.contactoEmergenciaTelefono = "Ingresa un teléfono de 10 dígitos.";
-    else if (soloDigitos(f.contactoEmergenciaTelefono) === soloDigitos(f.telefono)) e.contactoEmergenciaTelefono = "Debe ser distinto al teléfono del técnico.";
+    if (!f.zona)         e.zona = "Selecciona la zona o sucursal.";
+    if (!f.servicio_id)  e.servicio_id = "Selecciona una especialidad.";
+    if (!f.contacto_emergencia_nombre.trim()) e.contacto_emergencia_nombre = "Ingresa el nombre del contacto de emergencia.";
+    if (soloDigitos(f.contacto_emergencia_telefono).length !== 10) e.contacto_emergencia_telefono = "Ingresa un teléfono de 10 dígitos.";
+    else if (soloDigitos(f.contacto_emergencia_telefono) === soloDigitos(f.telefono)) e.contacto_emergencia_telefono = "Debe ser distinto al teléfono del técnico.";
     setErrors(e); return Object.keys(e).length === 0;
   };
   const submit = (ev) => {
     ev.preventDefault(); if (!validate()) return;
-    const { confirmacionTelefono, confirmacionCorreo, ...datos } = f;
-    onSave({ ...datos, nombre:f.nombre.trim(), apellidoPaterno:f.apellidoPaterno.trim(), apellidoMaterno:f.apellidoMaterno.trim(), correo:f.correo.trim(), rfc:f.rfc.trim().toUpperCase(), nss:soloDigitos(f.nss), contactoEmergenciaNombre:f.contactoEmergenciaNombre.trim() });
+    guardar(() => onSave({
+      nombre:f.nombre.trim(), apellido_paterno:f.apellido_paterno.trim(), apellido_materno:f.apellido_materno.trim(),
+      telefono:f.telefono, correo:f.correo.trim(), rfc:f.rfc.trim().toUpperCase(), nss:soloDigitos(f.nss),
+      zona:f.zona, servicio_id:Number(f.servicio_id),
+      contacto_emergencia_nombre:f.contacto_emergencia_nombre.trim(), contacto_emergencia_telefono:f.contacto_emergencia_telefono,
+    }));
   };
   const fp = { form:f, update:up, errors };
   return (
@@ -1365,8 +1366,8 @@ function ModalTecnico({ onSave, onClose }) {
       <form className="form" onSubmit={submit} noValidate>
         <div className="form-row form-row-3">
           <Field {...fp} label="Nombre(s)*" name="nombre" placeholder="Nombre"/>
-          <Field {...fp} label="Ap. Paterno*" name="apellidoPaterno" placeholder="Ap. Paterno"/>
-          <Field {...fp} label="Ap. Materno (opcional)" name="apellidoMaterno" placeholder="Ap. Materno"/>
+          <Field {...fp} label="Ap. Paterno*" name="apellido_paterno" placeholder="Ap. Paterno"/>
+          <Field {...fp} label="Ap. Materno (opcional)" name="apellido_materno" placeholder="Ap. Materno"/>
         </div>
         <div className="form-row form-row-2">
           <Field {...fp} label="Teléfono*" name="telefono" type="tel" inputMode="tel" placeholder="81 0000 0000" maxLength={14}/>
@@ -1382,39 +1383,38 @@ function ModalTecnico({ onSave, onClose }) {
         </div>
         <div className="form-row form-row-2">
           <label>Zona o sucursal asignada*<div className="input-wrap">
-            <select value={f.sucursal} onChange={(e)=>up("sucursal",e.target.value)}>
+            <select value={f.zona} onChange={(e)=>up("zona",e.target.value)}>
               <option value="">Selecciona</option>
               {ZONAS.map((z)=><option key={z} value={z}>{z}</option>)}
             </select>
-          </div>{errors.sucursal&&<span className="field-error">{errors.sucursal}</span>}</label>
+          </div>{errors.zona&&<span className="field-error">{errors.zona}</span>}</label>
           <label>Especialidad*<div className="input-wrap">
-            <select value={f.especialidad} onChange={(e)=>up("especialidad",e.target.value)}>
+            <select value={f.servicio_id} onChange={(e)=>up("servicio_id",e.target.value)}>
               <option value="">Selecciona</option>
-              {SERVICES.map((sv)=><option key={sv.id} value={sv.label}>{sv.label}</option>)}
+              {servicios.map((sv)=><option key={sv.id} value={sv.id}>{sv.nombre}</option>)}
             </select>
-          </div>{errors.especialidad&&<span className="field-error">{errors.especialidad}</span>}</label>
+          </div>{errors.servicio_id&&<span className="field-error">{errors.servicio_id}</span>}</label>
         </div>
         <div className="form-row form-row-2">
-          <Field {...fp} label="Contacto de emergencia (nombre)*" name="contactoEmergenciaNombre" placeholder="Nombre completo"/>
-          <Field {...fp} label="Contacto de emergencia (teléfono)*" name="contactoEmergenciaTelefono" type="tel" inputMode="tel" placeholder="81 0000 0000" maxLength={14}/>
+          <Field {...fp} label="Contacto de emergencia (nombre)*" name="contacto_emergencia_nombre" placeholder="Nombre completo"/>
+          <Field {...fp} label="Contacto de emergencia (teléfono)*" name="contacto_emergencia_telefono" type="tel" inputMode="tel" placeholder="81 0000 0000" maxLength={14}/>
         </div>
+        {errors._form && <span className="field-error">{errors._form}</span>}
         <div className="modal-actions">
           <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="btn btn-primary"><Plus size={15}/> Guardar técnico</button>
+          <button type="submit" className="btn btn-primary" disabled={guardando}><Plus size={15}/> {guardando ? "Guardando…" : "Guardar técnico"}</button>
         </div>
       </form>
     </Modal>
   );
 }
 
-function ModalProveedor({ onSave, onClose }) {
-  const [f, setF] = useState({ nombre:"", telefono:"", confirmacionTelefono:"", correo:"", confirmacionCorreo:"", rfc:"", categoriaProveedor:"", direccion:"" });
-  const [errors, setErrors] = useState({});
-  const up = (k,v) => { setF((x)=>({...x,[k]:v})); setErrors((e)=>(e[k]?{...e,[k]:undefined}:e)); };
+function ModalProveedor({ onSave, onClose, categorias }) {
+  const { f, up, errors, setErrors, guardando, guardar } = useFormModal({ nombre:"", telefono:"", confirmacionTelefono:"", correo:"", confirmacionCorreo:"", rfc:"", categoria_proveedor:"", direccion:"" });
   const validate = () => {
     const e = {};
     if (!f.nombre.trim()) e.nombre = "Ingresa la razón social.";
-    if (!f.categoriaProveedor) e.categoriaProveedor = "Selecciona una categoría.";
+    if (!f.categoria_proveedor) e.categoria_proveedor = "Selecciona una categoría.";
     if (soloDigitos(f.telefono).length !== 10) e.telefono = "Ingresa un teléfono de 10 dígitos.";
     if (soloDigitos(f.confirmacionTelefono) !== soloDigitos(f.telefono) || !f.confirmacionTelefono.trim()) e.confirmacionTelefono = "Los teléfonos no coinciden.";
     if (!EMAIL_RE.test(f.correo.trim())) e.correo = "Correo inválido.";
@@ -1425,8 +1425,10 @@ function ModalProveedor({ onSave, onClose }) {
   };
   const submit = (ev) => {
     ev.preventDefault(); if (!validate()) return;
-    const { confirmacionTelefono, confirmacionCorreo, ...datos } = f;
-    onSave({ ...datos, nombre:f.nombre.trim(), correo:f.correo.trim(), direccion:f.direccion.trim(), rfc:f.rfc.trim().toUpperCase() });
+    guardar(() => onSave({
+      nombre:f.nombre.trim(), categoria_proveedor:f.categoria_proveedor, telefono:f.telefono,
+      correo:f.correo.trim(), rfc:f.rfc.trim().toUpperCase(), direccion:f.direccion.trim(),
+    }));
   };
   const fp = { form:f, update:up, errors };
   return (
@@ -1435,11 +1437,11 @@ function ModalProveedor({ onSave, onClose }) {
         <div className="form-row form-row-2">
           <Field {...fp} label="Nombre*" name="nombre" placeholder="Razón social"/>
           <label>Categoría*<div className="input-wrap">
-            <select value={f.categoriaProveedor} onChange={(e)=>up("categoriaProveedor",e.target.value)}>
+            <select value={f.categoria_proveedor} onChange={(e)=>up("categoria_proveedor",e.target.value)}>
               <option value="">Selecciona</option>
-              {["Químicos","Equipos","Cebos y trampas","Desinfectantes","Otros"].map((c)=><option key={c}>{c}</option>)}
+              {categorias.map((c)=><option key={c}>{c}</option>)}
             </select>
-          </div>{errors.categoriaProveedor&&<span className="field-error">{errors.categoriaProveedor}</span>}</label>
+          </div>{errors.categoria_proveedor&&<span className="field-error">{errors.categoria_proveedor}</span>}</label>
         </div>
         <div className="form-row form-row-2">
           <Field {...fp} label="Teléfono*" name="telefono" type="tel" inputMode="tel" placeholder="81 0000 0000" maxLength={14}/>
@@ -1451,9 +1453,10 @@ function ModalProveedor({ onSave, onClose }) {
         </div>
         <Field {...fp} label="RFC*" name="rfc" placeholder="RFC" maxLength={13}/>
         <Field {...fp} label="Dirección*" name="direccion" placeholder="Calle, número, ciudad"/>
+        {errors._form && <span className="field-error">{errors._form}</span>}
         <div className="modal-actions">
           <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="btn btn-primary"><Plus size={15}/> Guardar proveedor</button>
+          <button type="submit" className="btn btn-primary" disabled={guardando}><Plus size={15}/> {guardando ? "Guardando…" : "Guardar proveedor"}</button>
         </div>
       </form>
     </Modal>
@@ -1461,38 +1464,110 @@ function ModalProveedor({ onSave, onClose }) {
 }
 
 function ModalMateriaPrima({ onSave, onClose, proveedores }) {
-  const [f, setF] = useState({ nombre:"", descripcion:"", cantidad:"", unidad:"L", minimo:"", precioMateriaPrima:"", proveedorId:"" });
-  const up = (k,v) => setF((x)=>({...x,[k]:v}));
-  const submit = (e) => {
-    e.preventDefault();
-    if (!f.nombre.trim() || f.cantidad === "" || f.precioMateriaPrima === "") return;
-    if (Number(f.cantidad) < 0 || Number(f.precioMateriaPrima) < 0 || Number(f.minimo||0) < 0) return;
-    onSave(f);
+  const { f, up, errors, setErrors, guardando, guardar } = useFormModal({ nombre:"", descripcion:"", cantidad:"", unidad:"L", stock_minimo:"", precio_unitario:"", proveedor_id:"" });
+  const validate = () => {
+    const e = {};
+    if (!f.nombre.trim()) e.nombre = "Ingresa el nombre del insumo.";
+    if (f.cantidad === "" || Number(f.cantidad) < 0) e.cantidad = "Cantidad inválida.";
+    if (f.precio_unitario === "" || Number(f.precio_unitario) < 0) e.precio_unitario = "Precio inválido.";
+    if (f.stock_minimo !== "" && Number(f.stock_minimo) < 0) e.stock_minimo = "Stock mínimo inválido.";
+    setErrors(e); return Object.keys(e).length === 0;
+  };
+  const submit = (ev) => {
+    ev.preventDefault(); if (!validate()) return;
+    guardar(() => onSave({
+      nombre:f.nombre.trim(), descripcion:f.descripcion.trim(), cantidad:Number(f.cantidad), unidad:f.unidad,
+      stock_minimo:Number(f.stock_minimo || 0), precio_unitario:Number(f.precio_unitario),
+      proveedor_id:f.proveedor_id ? Number(f.proveedor_id) : null,
+    }));
   };
   return (
     <Modal title="Agregar insumo / materia prima" onClose={onClose}>
-      <form className="form" onSubmit={submit}>
-        <label>Nombre del insumo*<div className="input-wrap"><input value={f.nombre} onChange={(e)=>up("nombre",e.target.value)} required placeholder="Ej. Insecticida Cipermetrina"/></div></label>
+      <form className="form" onSubmit={submit} noValidate>
+        <label>Nombre del insumo*<div className="input-wrap"><input value={f.nombre} onChange={(e)=>up("nombre",e.target.value)} placeholder="Ej. Insecticida Cipermetrina"/></div>{errors.nombre&&<span className="field-error">{errors.nombre}</span>}</label>
         <label>Descripción<div className="input-wrap"><input value={f.descripcion} onChange={(e)=>up("descripcion",e.target.value)} placeholder="Breve descripción del producto"/></div></label>
         <div className="form-row form-row-3">
-          <label>Cantidad*<div className="input-wrap"><input type="number" min="0" value={f.cantidad} onChange={(e)=>up("cantidad",e.target.value)} required placeholder="0"/></div></label>
+          <label>Cantidad*<div className="input-wrap"><input type="number" min="0" step="any" value={f.cantidad} onChange={(e)=>up("cantidad",e.target.value)} placeholder="0"/></div>{errors.cantidad&&<span className="field-error">{errors.cantidad}</span>}</label>
           <label>Unidad<div className="input-wrap">
             <select value={f.unidad} onChange={(e)=>up("unidad",e.target.value)}>
               {UNIDADES.map((u)=><option key={u}>{u}</option>)}
             </select>
           </div></label>
-          <label>Stock mínimo<div className="input-wrap"><input type="number" min="0" value={f.minimo} onChange={(e)=>up("minimo",e.target.value)} placeholder="0"/></div></label>
+          <label>Stock mínimo<div className="input-wrap"><input type="number" min="0" step="any" value={f.stock_minimo} onChange={(e)=>up("stock_minimo",e.target.value)} placeholder="0"/></div>{errors.stock_minimo&&<span className="field-error">{errors.stock_minimo}</span>}</label>
         </div>
-        <label>Precio por unidad (MXN)*<div className="input-wrap"><input type="number" min="0" step="0.01" value={f.precioMateriaPrima} onChange={(e)=>up("precioMateriaPrima",e.target.value)} required placeholder="0.00"/></div></label>
+        <label>Precio por unidad (MXN)*<div className="input-wrap"><input type="number" min="0" step="0.01" value={f.precio_unitario} onChange={(e)=>up("precio_unitario",e.target.value)} placeholder="0.00"/></div>{errors.precio_unitario&&<span className="field-error">{errors.precio_unitario}</span>}</label>
         <label>Proveedor<div className="input-wrap">
-          <select value={f.proveedorId} onChange={(e)=>up("proveedorId",e.target.value)}>
+          <select value={f.proveedor_id} onChange={(e)=>up("proveedor_id",e.target.value)}>
             <option value="">Sin proveedor asignado</option>
             {proveedores.map((p)=><option key={p.id} value={p.id}>{p.nombre}</option>)}
           </select>
         </div></label>
+        {errors._form && <span className="field-error">{errors._form}</span>}
         <div className="modal-actions">
           <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="btn btn-primary"><Plus size={15}/> Guardar insumo</button>
+          <button type="submit" className="btn btn-primary" disabled={guardando}><Plus size={15}/> {guardando ? "Guardando…" : "Guardar insumo"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ModalCompra({ onSave, onClose, proveedores, materiaPrima }) {
+  const [proveedorId, setProveedorId] = useState("");
+  const [lineas, setLineas] = useState([{ materia_prima_id:"", cantidad:"", costo_unitario:"" }]);
+  const [error, setError] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const setLinea = (i, patch) => { setError(""); setLineas((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l))); };
+  const elegirInsumo = (i, id) => {
+    const m = materiaPrima.find((x) => String(x.id) === String(id));
+    setLinea(i, { materia_prima_id:id, costo_unitario: m ? String(m.precio_unitario) : "" });
+  };
+  const subtotal = lineas.reduce((a, l) => a + (Number(l.cantidad) || 0) * (Number(l.costo_unitario) || 0), 0);
+  const iva = Math.round(subtotal * IVA_RATE * 100) / 100;
+  const submit = async (ev) => {
+    ev.preventDefault(); if (guardando) return;
+    if (!proveedorId) { setError("Selecciona un proveedor."); return; }
+    if (lineas.some((l) => !l.materia_prima_id || !(Number(l.cantidad) > 0) || l.costo_unitario === "" || Number(l.costo_unitario) < 0)) {
+      setError("Completa cada línea: insumo, cantidad mayor a 0 y costo."); return;
+    }
+    setGuardando(true);
+    try {
+      await onSave({ proveedor_id:Number(proveedorId), items:lineas.map((l) => ({ materia_prima_id:Number(l.materia_prima_id), cantidad:Number(l.cantidad), costo_unitario:Number(l.costo_unitario) })) });
+    } catch (err) { setError(err.message); setGuardando(false); }
+  };
+  const sinDatos = proveedores.length === 0 || materiaPrima.length === 0;
+  return (
+    <Modal title="Registrar compra a proveedor" onClose={onClose}>
+      <form className="form" onSubmit={submit} noValidate>
+        {sinDatos && <span className="field-error">Primero registra al menos un proveedor y un insumo.</span>}
+        <label>Proveedor*<div className="input-wrap">
+          <select value={proveedorId} onChange={(e)=>{ setProveedorId(e.target.value); setError(""); }}>
+            <option value="">Selecciona</option>
+            {proveedores.map((p)=><option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </select>
+        </div></label>
+        <p className="form-section-title">Productos comprados</p>
+        {lineas.map((l, i) => (
+          <div className="compra-linea" key={i}>
+            <label>Insumo<div className="input-wrap">
+              <select value={l.materia_prima_id} onChange={(e)=>elegirInsumo(i, e.target.value)}>
+                <option value="">Selecciona</option>
+                {materiaPrima.map((m)=><option key={m.id} value={m.id}>{m.nombre} ({m.unidad})</option>)}
+              </select>
+            </div></label>
+            <label>Cantidad<div className="input-wrap"><input type="number" min="0" step="any" value={l.cantidad} onChange={(e)=>setLinea(i,{cantidad:e.target.value})} placeholder="0"/></div></label>
+            <label>Costo unitario<div className="input-wrap"><input type="number" min="0" step="0.01" value={l.costo_unitario} onChange={(e)=>setLinea(i,{costo_unitario:e.target.value})} placeholder="0.00"/></div></label>
+            <button type="button" className="btn-del" title="Quitar línea" disabled={lineas.length === 1} onClick={()=>setLineas((ls)=>ls.filter((_, j)=>j!==i))}><Trash2 size={14}/></button>
+          </div>
+        ))}
+        <button type="button" className="btn btn-outline" style={{ alignSelf:"flex-start" }} onClick={()=>setLineas((ls)=>[...ls, { materia_prima_id:"", cantidad:"", costo_unitario:"" }])}><Plus size={15}/> Agregar otro producto</button>
+        <div className="ticket-row"><span>Subtotal</span><strong>{currency2(subtotal)}</strong></div>
+        <div className="ticket-row"><span>IVA (16%)</span><strong>{currency2(iva)}</strong></div>
+        <div className="ticket-row ticket-total"><span>Total</span><strong>{currency2(subtotal + iva)}</strong></div>
+        {error && <span className="field-error">{error}</span>}
+        <div className="modal-actions">
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="btn btn-primary" disabled={guardando || sinDatos}><Plus size={15}/> {guardando ? "Guardando…" : "Registrar compra"}</button>
         </div>
       </form>
     </Modal>
@@ -1504,34 +1579,36 @@ function ModalMateriaPrima({ onSave, onClose, proveedores }) {
    ============================================================ */
 
 export default function App() {
-  const [page,         setPage]         = useState("home");
-  const [quote,        setQuote]        = useState({ selections:{ propertyId:null, pestId:null, sizeId:null, serviceId:null }, result:null });
-  const [solicitudes,  setSolicitudes]  = useState(buildMockSolicitudes());
-  const [clientes,     setClientes]     = useState(CLIENTES_MOCK);
-  const [tecnicos,     setTecnicos]     = useState(TECNICOS_INIT);
-  const [proveedores,  setProveedores]  = useState(PROVEEDORES_INIT);
-  const [materiaPrima, setMateriaPrima] = useState(MATERIA_PRIMA_INIT);
-  const [toastMsg,     setToastMsg]     = useState("");
-  const [usuario,      setUsuario]      = useState(null);
+  const [page,       setPage]      = useState("home");
+  const [quote,      setQuote]     = useState({ selections:{ propertyId:null, pestId:null, sizeId:null, serviceId:null }, result:null });
+  const [cat,        setCat]       = useState(null);      // catálogo que viene de MySQL
+  const [catError,   setCatError]  = useState("");
+  const [toastMsg,   setToastMsg]  = useState("");
+  const [usuario,    setUsuario]   = useState(null);
 
-  /* Registra la solicitud y crea (o reutiliza por correo) al cliente */
-  const addSolicitud = (r, datosCliente) => {
-    const correo = datosCliente.correo.toLowerCase();
-    const existente = clientes.find((c) => c.correo.toLowerCase() === correo);
-    let clienteId;
-    if (existente) {
-      clienteId = existente.id;
-    } else {
-      clienteId = nextClienteId();
-      setClientes((l) => [...l, { id:clienteId, ...datosCliente }]);
-    }
-    setSolicitudes((l) => [{ ...r, clienteId }, ...l]);
-  };
+  const cargarCatalogo = useCallback(async () => {
+    setCatError("");
+    try { setCat(await api("/catalogos")); }
+    catch (err) { setCatError(err.message); }
+  }, []);
+
+  /* Al abrir la página: carga el catálogo y recupera la sesión si ya había iniciado */
+  useEffect(() => {
+    cargarCatalogo();
+    api("/auth/me").then((r) => setUsuario(r.usuario)).catch(() => {});
+  }, [cargarCatalogo]);
+
   const handleLogin  = (u) => { setUsuario(u); setToastMsg(`Bienvenido, ${u.nombre}.`); };
-  const handleLogout = () => { setUsuario(null); setPage("home"); setToastMsg("Sesión cerrada."); };
-  const closeToast   = useCallback(() => setToastMsg(""), []);
+  const handleLogout = async () => {
+    try { await api("/auth/logout", { method:"POST" }); } catch { /* si falla, igual se cierra en pantalla */ }
+    setUsuario(null); setPage("home"); setToastMsg("Sesión cerrada.");
+  };
+  const sesionExpirada = useCallback(() => { setUsuario(null); setPage("login"); setToastMsg("Tu sesión expiró. Inicia sesión de nuevo."); }, []);
+  const closeToast = useCallback(() => setToastMsg(""), []);
 
   useEffect(() => { window.scrollTo({ top:0 }); }, [page]);
+
+  const gate = (hijo) => <CatalogGate cat={cat} error={catError} onRetry={cargarCatalogo}>{hijo}</CatalogGate>;
 
   return (
     <div className="mk-app">
@@ -1540,19 +1617,12 @@ export default function App() {
 
       {page==="home"      && <HomePage  setPage={setPage}/>}
       {page==="login"     && <LoginPage setPage={setPage} onLogin={handleLogin}/>}
-      {page==="cotizador" && <CotizadorPage quote={quote} setQuote={setQuote} setPage={setPage} setToast={setToastMsg}/>}
-      {page==="solicitud" && <SolicitudPage quote={quote} setPage={setPage} addSolicitud={addSolicitud} setToast={setToastMsg}/>}
-      {page==="catalogo"  && <CatalogoPage setPage={setPage} setQuote={setQuote}/>}
+      {page==="cotizador" && gate(<CotizadorPage cat={cat} quote={quote} setQuote={setQuote} setPage={setPage} setToast={setToastMsg}/>)}
+      {page==="solicitud" && gate(<SolicitudPage cat={cat} quote={quote} setPage={setPage} setToast={setToastMsg}/>)}
+      {page==="catalogo"  && gate(<CatalogoPage cat={cat} setPage={setPage} setQuote={setQuote}/>)}
       {page==="admin"     && (
         usuario
-          ? <AdminPage
-              solicitudes={solicitudes}  setSolicitudes={setSolicitudes}
-              clientes={clientes}
-              tecnicos={tecnicos}        setTecnicos={setTecnicos}
-              proveedores={proveedores}  setProveedores={setProveedores}
-              materiaPrima={materiaPrima}setMateriaPrima={setMateriaPrima}
-              setToast={setToastMsg}     usuario={usuario}
-            />
+          ? gate(<AdminPage cat={cat} usuario={usuario} setToast={setToastMsg} onSesionExpirada={sesionExpirada}/>)
           : <LoginPage setPage={setPage} onLogin={handleLogin}/>
       )}
 
@@ -1793,7 +1863,10 @@ body { display:block!important; place-items:unset!important; }
 .envio-status { margin-bottom:18px; font-size:13px; }
 .envio-status span { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:center; color:var(--ink-soft); }
 .envio-enviado span { color:#1E5E24; font-weight:600; }
-.envio-error span, .envio-sin-configurar span { color:#8A5A00; }
+.envio-pendiente span { color:#8A5A00; }
+.compra-linea { display:grid; grid-template-columns:2fr 1fr 1fr auto; gap:10px; align-items:end; }
+.compra-linea .btn-del { margin-bottom:6px; }
+.btn-del:disabled { opacity:.35; cursor:not-allowed; }
 .envio-status a { color:var(--blue); font-weight:600; text-decoration:underline; }
 .empty-state { max-width:420px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:10px; }
 .empty-state svg { color:var(--teal-light); }
